@@ -425,6 +425,9 @@ function selectAddRow() {
 		select.selectedIndex = 0;
 	}
 	for (const input of qsa('input', row)) {
+		if (input.classList.contains('search-column')) {
+			continue;
+		}
 		input.name = input.name.replace(/[a-z]\[\d+/, '$&1');
 		input.className = '';
 		if (input.type == 'checkbox') {
@@ -434,13 +437,14 @@ function selectAddRow() {
 		}
 	}
 	field.parentNode.parentNode.append(row);
+	setupSearchColumns(row);
 }
 
 /** Rerun the handler of the first field in the row, it checks whether an index will be used
 * @this HTMLElement
 */
 function selectFirstChange() {
-	fire(this.parentNode.firstChild, 'change');
+	fire(qs('[name$="[col]"]', this.parentNode), 'change');
 }
 
 /** Prevent the search handler on Enter, clear the field by Esc
@@ -482,11 +486,147 @@ function selectSearch(name) {
 	});
 	if (!div) { // use the last empty row
 		div = divs[divs.length - 1];
-		div.firstChild.value = name;
-		fire(div.firstChild, 'change');
+		const col = qs('[name$="[col]"]', div);
+		col.value = name;
+		fire(col, 'change');
 	}
 	qs('[name$="[val]"]', div).focus();
 	return false;
+}
+
+let searchColumnId;
+
+/** Print matching columns in a searchable select
+* @param {object} picker
+*/
+function searchColumnResults(picker) {
+	const query = picker.query.toLowerCase();
+	picker.options = [...picker.select.options].filter(option => option.value && option.text.toLowerCase().indexOf(query) >= 0);
+	picker.active = Math.min(picker.active, picker.options.length - 1);
+	picker.list.innerHTML = '';
+	for (const [index, option] of picker.options.entries()) {
+		const item = document.createElement('li');
+		item.setAttribute('role', 'option');
+		item.textContent = option.text;
+		alterClass(item, 'active', index == picker.active);
+		item.setAttribute('aria-selected', index == picker.active);
+		item.addEventListener('mousedown', event => event.preventDefault()); // keep focus in the input while choosing
+		item.addEventListener('click', () => searchColumnChoose(picker, option));
+		picker.list.append(item);
+	}
+	picker.input.setAttribute('aria-expanded', true);
+	if (picker.active >= 0) {
+		picker.input.setAttribute('aria-activedescendant', picker.list.id + '-' + picker.active);
+		picker.list.children[picker.active].id = picker.list.id + '-' + picker.active;
+	} else {
+		picker.input.removeAttribute('aria-activedescendant');
+	}
+	picker.list.hidden = false;
+}
+
+/** Close a searchable select
+* @param {object} picker
+*/
+function searchColumnClose(picker) {
+	picker.list.hidden = true;
+	picker.input.setAttribute('aria-expanded', false);
+	picker.input.removeAttribute('aria-activedescendant');
+}
+
+/** Select a column from a searchable select
+* @param {object} picker
+* @param {HTMLOptionElement} option
+*/
+function searchColumnChoose(picker, option) {
+	picker.select.value = option.value;
+	picker.input.value = option.text;
+	searchColumnClose(picker);
+	fire(picker.select, 'change');
+}
+
+/** Set up searchable column selects
+* @param {HTMLElement|Document} [context=document]
+*/
+function setupSearchColumns(context = document) {
+	for (const select of qsa('select[name$="[col]"]', context)) {
+		if (!select.closest('#fieldset-search') || select.searchColumn) {
+			continue;
+		}
+		let input = select.previousElementSibling;
+		if (!input || !input.matches('input.search-column')) {
+			input = document.createElement('input');
+			input.type = 'search';
+			input.className = 'search-column';
+			const labelledBy = select.getAttribute('aria-labelledby');
+			if (labelledBy) {
+				input.setAttribute('aria-labelledby', labelledBy);
+			}
+			select.parentNode.insertBefore(input, select);
+		}
+		let list = select.nextElementSibling;
+		if (!list || !list.matches('ul.search-column-list')) {
+			list = document.createElement('ul');
+			list.className = 'search-column-list';
+			select.parentNode.insertBefore(list, select.nextSibling);
+		}
+		list.id = 'search-column-' + ++searchColumnId;
+		list.setAttribute('role', 'listbox');
+		list.hidden = true;
+		select.parentNode.classList.add('search-column-picker');
+		input.setAttribute('role', 'combobox');
+		input.setAttribute('aria-autocomplete', 'list');
+		input.setAttribute('aria-controls', list.id);
+		input.setAttribute('aria-expanded', false);
+		const picker = {select: select, input: input, list: list, options: [], active: -1, query: ''};
+		select.searchColumn = picker;
+		const selected = () => {
+			input.value = (select.selectedIndex ? select.options[select.selectedIndex].text : '');
+		};
+		input.addEventListener('focus', () => {
+			input.select();
+			picker.query = '';
+			picker.active = -1;
+			searchColumnResults(picker);
+		});
+		input.addEventListener('click', () => {
+			if (list.hidden) {
+				picker.query = '';
+				picker.active = -1;
+				searchColumnResults(picker);
+			}
+		});
+		input.addEventListener('input', () => {
+			picker.query = input.value;
+			picker.active = 0;
+			searchColumnResults(picker);
+		});
+		input.addEventListener('keydown', event => {
+			if (event.key == 'ArrowDown' || event.key == 'ArrowUp') {
+				if (list.hidden) {
+					picker.query = '';
+					picker.active = -1;
+				}
+				if (picker.options.length) {
+					picker.active = (picker.active + (event.key == 'ArrowDown' ? 1 : picker.options.length - 1)) % picker.options.length;
+				}
+				searchColumnResults(picker);
+				event.preventDefault();
+			} else if (event.key == 'Enter') {
+				if (picker.active >= 0) {
+					searchColumnChoose(picker, picker.options[picker.active]);
+				}
+				event.preventDefault();
+			} else if (isEscape(event)) {
+				selected();
+				searchColumnClose(picker);
+				event.preventDefault();
+			}
+		});
+		input.addEventListener('blur', () => setTimeout(() => searchColumnClose(picker), 0));
+		select.addEventListener('change', selected);
+		select.classList.add('search-column-select');
+		selected();
+	}
 }
 
 
@@ -504,6 +644,225 @@ function isCtrl(event) {
 */
 function isEscape(event) {
 	return event.key == 'Escape' && !event.shiftKey && !event.altKey && !isCtrl(event);
+}
+
+let shortcuts;
+
+/** Get links available through the keyboard shortcuts
+* @return {Array<{href: string, label: string}>}
+*/
+function shortcutLinks() {
+	const tables = qs('#tables');
+	if (!tables) {
+		return [];
+	}
+	const links = [];
+	for (const row of qsa('li', tables)) {
+		const select = qs('a.select', row);
+		if (select) {
+			const link = {href: select.href, label: row.lastElementChild.textContent.trim()};
+			const structure = qs('a.structure, a.view', row);
+			if (structure) {
+				link.structure = structure.href;
+			}
+			links.push(link);
+		}
+	}
+	for (const a of qsa('#menu .links a[href]')) {
+		links.push({href: a.href, label: a.textContent.trim()});
+	}
+	return links;
+}
+
+/** Create the keyboard shortcuts dialog
+* @return {HTMLElement}
+*/
+function shortcutDialog() {
+	let dialog = qs('#shortcuts');
+	if (dialog) {
+		return dialog;
+	}
+	dialog = document.createElement('div');
+	dialog.id = 'shortcuts';
+	dialog.hidden = true;
+	const content = document.createElement('div');
+	content.setAttribute('role', 'dialog');
+	content.setAttribute('aria-modal', 'true');
+	content.setAttribute('aria-labelledby', 'shortcuts-title');
+	const title = document.createElement('h3');
+	title.id = 'shortcuts-title';
+	title.textContent = shortcutLabels.title;
+	const input = document.createElement('input');
+	input.type = 'search';
+	input.placeholder = shortcutLabels.search;
+	input.setAttribute('aria-controls', 'shortcuts-results');
+	input.addEventListener('input', () => {
+		shortcuts.active = 0;
+		shortcutResults();
+	});
+	const results = document.createElement('ul');
+	results.id = 'shortcuts-results';
+	results.setAttribute('role', 'listbox');
+	content.append(title, input, results);
+	dialog.append(content);
+	dialog.addEventListener('click', event => {
+		if (event.target == dialog) {
+			shortcutClose();
+		}
+	});
+	document.body.append(dialog);
+	return dialog;
+}
+
+/** Print the matching keyboard shortcuts */
+function shortcutResults() {
+	const dialog = shortcutDialog();
+	const input = qs('input', dialog);
+	const results = qs('ul', dialog);
+	const query = input.value.toLowerCase();
+	const matches = value => {
+		let index = 0;
+		return [...query].every(char => (index = value.indexOf(char, index) + 1));
+	};
+	shortcuts.results = shortcuts.links.filter(link => matches(link.label.toLowerCase()));
+	shortcuts.active = Math.min(shortcuts.active, shortcuts.results.length - 1);
+	results.innerHTML = '';
+	if (!shortcuts.results.length) {
+		const result = document.createElement('li');
+		result.textContent = shortcutLabels.empty;
+		results.append(result);
+		input.removeAttribute('aria-activedescendant');
+		return;
+	}
+	for (const [index, link] of shortcuts.results.entries()) {
+		const result = document.createElement('li');
+		result.id = 'shortcut-' + index;
+		result.setAttribute('role', 'option');
+		result.textContent = link.label;
+		alterClass(result, 'active', index == shortcuts.active);
+		result.setAttribute('aria-selected', index == shortcuts.active);
+		result.addEventListener('click', () => shortcutFollow(link));
+		results.append(result);
+	}
+	input.setAttribute('aria-activedescendant', 'shortcut-' + shortcuts.active);
+}
+
+/** Open the keyboard shortcuts dialog
+* @return {boolean} false
+*/
+function shortcutOpen(links = shortcutLinks(), title = shortcutLabels.title, search = shortcutLabels.search) {
+	if (!links.length) {
+		return;
+	}
+	const dialog = shortcutDialog();
+	shortcuts = {links: links, results: links, active: 0, focus: document.activeElement};
+	dialog.hidden = false;
+	const input = qs('input', dialog);
+	qs('h3', dialog).textContent = title;
+	input.value = '';
+	input.placeholder = search;
+	shortcutResults();
+	input.focus();
+	return false;
+}
+
+/** Close the keyboard shortcuts dialog */
+function shortcutClose() {
+	const dialog = qs('#shortcuts');
+	if (dialog && !dialog.hidden) {
+		dialog.hidden = true;
+		if (shortcuts.focus && document.documentElement.contains(shortcuts.focus)) {
+			shortcuts.focus.focus();
+		}
+	}
+}
+
+/** Follow a keyboard shortcut link
+* @param {{href?: string, structure?: string, action?: function}} link
+* @param {boolean} [openStructure]
+* @param {boolean} [newTab]
+*/
+function shortcutFollow(link, openStructure, newTab) {
+	if (link.action) {
+		link.action();
+	} else {
+		const href = (openStructure && link.structure || link.href);
+		if (newTab) {
+			open(href, '_blank', 'noopener,noreferrer');
+		} else {
+			location.href = href;
+		}
+	}
+}
+
+/** Open the database picker
+* @return {boolean} false
+*/
+function shortcutDatabase() {
+	const select = qs('#dbs select[name=db]');
+	if (!select) {
+		return;
+	}
+	const links = [];
+	for (const option of select.options) {
+		if (option.value) {
+			links.push({
+				label: option.text,
+				action: () => {
+					select.value = option.value;
+					dbChange.call(select);
+				},
+			});
+		}
+	}
+	return shortcutOpen(links, shortcutLabels.database, shortcutLabels.databases);
+}
+
+/** Focus search in the current table
+* @return {boolean} false
+*/
+function shortcutSearch() {
+	const fieldset = qs('#fieldset-search');
+	if (!fieldset) {
+		return;
+	}
+	alterClass(fieldset, 'hidden', false);
+	qs('[name$="[val]"]', fieldset).focus();
+	return false;
+}
+
+/** Handle keyboard shortcuts
+* @param {KeyboardEvent} event
+* @return {boolean} false if handled
+*/
+function shortcutKeydown(event) {
+	const dialog = qs('#shortcuts');
+	if (dialog && !dialog.hidden) {
+		if (isEscape(event)) {
+			shortcutClose();
+			return false;
+		}
+		if (isCtrl(event) && !event.shiftKey && event.key.toLowerCase() == 'p') {
+			return false;
+		}
+		if (event.key == 'ArrowDown' || event.key == 'ArrowUp') {
+			if (shortcuts.results.length) {
+				shortcuts.active = (shortcuts.active + (event.key == 'ArrowDown' ? 1 : shortcuts.results.length - 1)) % shortcuts.results.length;
+				shortcutResults();
+			}
+			return false;
+		}
+		if (event.key == 'Enter' && shortcuts.results.length) {
+			shortcutFollow(shortcuts.results[shortcuts.active], isCtrl(event) && !event.shiftKey, isCtrl(event) && event.shiftKey);
+			return false;
+		}
+	} else if (isCtrl(event) && event.shiftKey && event.key.toLowerCase() == 'd') {
+		return shortcutDatabase();
+	} else if (isCtrl(event) && event.shiftKey && event.key.toLowerCase() == 'f') {
+		return shortcutSearch();
+	} else if (isCtrl(event) && !event.shiftKey && event.key.toLowerCase() == 'p') {
+		return shortcutOpen();
+	}
 }
 
 
@@ -537,6 +896,9 @@ function submitKeydown(button, event) {
 * @return {boolean}
 */
 function bodyKeydown(event) {
+	if (shortcutKeydown(event) === false) {
+		return false;
+	}
 	if (isEscape(event)) {
 		menuClose();
 	}
@@ -1016,3 +1378,5 @@ mixin(document, {
 	onsearch: delegateEvent, // WebKit only, it bubbles
 	onsubmit: bodySubmit, // calls delegateEvent() itself
 });
+
+addEventListener('DOMContentLoaded', () => setupSearchColumns());

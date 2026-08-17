@@ -116,6 +116,89 @@ test('Create table 2', async () => {
 	await expect(page.locator('body')).toContainText('Table has been created.');
 });
 
+test('Keyboard navigation', async () => {
+	await goto(page, '/adminer/?username=ODBC&db=adminer_test&sql='
+		+ encodeURIComponent('CREATE TABLE sales_transaction_items (id int); CREATE TABLE sales_transaction_summary (id int); CREATE TABLE educational_institution (id int)'));
+	await button(page, 'Execute').click();
+	await goto(page, '/adminer/?username=ODBC&db=adminer_test&select=interprets');
+	await page.keyboard.press('Control+P');
+	const shortcuts = page.locator('#shortcuts');
+	const input = shortcuts.locator('input');
+	await expect(input).toBeFocused();
+	await input.fill('albums');
+	await Promise.all([
+		page.waitForURL(/select=albums/),
+		page.keyboard.press('Enter'),
+	]);
+	await page.keyboard.press('Control+P');
+	await input.fill('albums');
+	await Promise.all([
+		page.waitForURL(/table=albums/),
+		page.keyboard.press('Control+Enter'),
+	]);
+	await page.keyboard.press('Control+P');
+	await input.fill('albums');
+	const tabPromise = page.waitForEvent('popup');
+	await page.keyboard.press('Control+Shift+Enter');
+	const tab = await tabPromise;
+	await tab.waitForURL(/select=albums/);
+	await expect(page).toHaveURL(/table=albums/);
+	await page.keyboard.press('Control+P');
+	await input.fill('SQL command');
+	await Promise.all([
+		page.waitForURL(/sql=/),
+		page.keyboard.press('Enter'),
+	]);
+	const query = page.locator('textarea').first();
+	await query.focus();
+	await page.keyboard.press('Control+P');
+	await page.keyboard.press('Escape');
+	await expect(query).toBeFocused();
+	await page.keyboard.press('Control+P');
+	await input.fill('salestransaction');
+	await expect(shortcuts.getByRole('option')).toHaveCount(2);
+	await expect(shortcuts).toContainText('sales_transaction_items');
+	await expect(shortcuts).toContainText('sales_transaction_summary');
+	await input.fill('eduinst');
+	await expect(shortcuts.getByRole('option')).toHaveCount(1);
+	await expect(shortcuts).toContainText('educational_institution');
+	await Promise.all([
+		page.waitForURL(/select=educational_institution/),
+		page.keyboard.press('Enter'),
+	]);
+});
+
+test('Keyboard database and table search', async () => {
+	await goto(page, '/adminer/?username=ODBC&db=adminer_test&select=albums');
+	await page.locator('a[href="#fieldset-search"].toggle').click();
+	await page.keyboard.press('Control+Shift+D');
+	const shortcuts = page.locator('#shortcuts');
+	const input = shortcuts.locator('input');
+	await expect(input).toBeFocused();
+	await input.fill('myl');
+	await Promise.all([
+		page.waitForURL(/db=mysql/),
+		page.keyboard.press('Enter'),
+	]);
+	await goto(page, '/adminer/?username=ODBC&db=adminer_test&select=albums');
+	await page.locator('a[href="#fieldset-search"].toggle').click();
+	await expect(page.locator('input.search-column')).toHaveCount(1);
+	await page.keyboard.press('Control+Shift+F');
+	const value = page.locator('[name="where[0][val]"]');
+	await expect(value).toBeFocused();
+	const column = page.locator('input.search-column').first();
+	await column.focus();
+	const columns = page.locator('.search-column-list').first();
+	await expect(columns).toContainText('id');
+	await expect(columns).toContainText('interpret');
+	await expect(columns).toContainText('title');
+	await column.fill('title');
+	await expect(columns.getByRole('option')).toHaveCount(1);
+	await column.press('Enter');
+	await expect(page.locator('[name="where[0][col]"]')).toHaveValue('title');
+	await expect(page.locator('input.search-column')).toHaveCount(2);
+});
+
 test('Foreign key', async () => {
 	await goto(page, '/adminer/?username=ODBC&db=adminer_test&table=albums');
 	await link(page, 'Create foreign key').click();
@@ -554,6 +637,12 @@ test('Editor', async () => {
 	await page.locator('[name="lang"]').selectOption({label: 'English'}); // submits the form
 	await page.locator('[name="auth[username]"]').fill('admin');
 	await button(page, 'Login').click();
+	await page.keyboard.press('Control+P');
+	await page.locator('#shortcuts input').fill('Interprets');
+	await Promise.all([
+		page.waitForURL(/select=interprets/),
+		page.keyboard.press('Enter'),
+	]);
 	await link(page, 'Interprets').click();
 	await link(page, 'New item').click();
 	await page.locator('[name="fields[name]"]').fill('Michael Jackson');

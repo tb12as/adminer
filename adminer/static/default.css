@@ -116,6 +116,18 @@ td.check { text-align: end; } /* to display the checkboxes next to the data */
 #schema .table { border: 1px solid silver; padding: 0 2px; cursor: move; position: absolute; box-sizing: border-box; }
 #schema .references { position: absolute; }
 #help { position: absolute; border: 1px solid #999; background: var(--dim); padding: 5px; font-family: monospace; z-index: 1; }
+#shortcuts { position: fixed; z-index: 2; top: 0; right: 0; bottom: 0; left: 0; padding-top: 10vh; background: rgba(0, 0, 0, .3); }
+#shortcuts > div { box-sizing: border-box; width: 90%; max-width: 40em; max-height: 80vh; overflow: auto; margin: auto; padding: 1em; border: 1px solid var(--fg); border-radius: 5px; background: var(--bg); box-shadow: 0 0 20px var(--fg); }
+#shortcuts h3 { margin-top: 0; }
+#shortcuts input { width: 100%; }
+#shortcuts ul { padding: 0; margin: .8em 0 0; }
+#shortcuts li { padding: .3em .5em; list-style: none; cursor: pointer; }
+#shortcuts li.active { background: var(--lit); }
+.js #fieldset-search .search-column-select { display: none; }
+.search-column-picker { position: relative; }
+.search-column-list { position: absolute; z-index: 1; top: 100%; left: 0; box-sizing: border-box; width: 100%; max-height: 15em; overflow: auto; padding: 0; margin: 0; border: 1px solid var(--fg); background: var(--bg); }
+.search-column-list li { padding: .2em .3em; list-style: none; cursor: pointer; }
+.search-column-list li.active, .search-column-list li:hover { background: var(--lit); }
 :target { background: var(--lit); }
 
 /* inlined here and not in compile.php because otherwise the development version flickers a little bit when loading the images */

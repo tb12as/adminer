@@ -66,7 +66,14 @@ function page_header(string $title, string $error = "", $breadcrumb = array(), s
 	echo script((isset($_COOKIE["adminer_version"]) || !adminer()->verifyVersion() ? "" : "onload = partial(verifyVersion, '" . VERSION . "');\n") . "
 const offlineMessage = '" . js_escape(lang('You are offline.')) . "';
 const thousandsSeparator = '" . js_escape(lang(',')) . "';
-const urlSeparators = '" . js_escape(ini_get("arg_separator.input")) . "';");
+const urlSeparators = '" . js_escape(ini_get("arg_separator.input")) . "';
+const shortcutLabels = {
+	title: '" . js_escape(lang('Navigate')) . "',
+	search: '" . js_escape(lang('Filter tables and actions')) . "',
+	empty: '" . js_escape(lang('No matching navigation')) . "',
+	database: '" . js_escape(lang('Database')) . "',
+	databases: '" . js_escape(lang('Filter databases')) . "',
+};");
 	echo "<div id='help' class='jush-" . JUSH . " jsonly hidden'" . on('mouseover', 'helpKeep') . on('mouseout', 'helpMouseout') . "></div>\n";
 	echo "<div id='content'>\n";
 	echo "<span id='menuopen' class='jsonly'" . on('click', 'menuToggle') . "><button title='" . lang('Menu') . "' class='icon icon-move' aria-expanded='false'></button></span>\n";
