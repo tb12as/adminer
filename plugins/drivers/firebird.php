@@ -17,6 +17,7 @@ if (isset($_GET["firebird"])) {
 			function attach($server, $username, $password): string {
 				$this->_link = ibase_connect($server, $username, $password);
 				if ($this->_link) {
+					// ibase connection string is 'host/port:/path/to/your.gdb'
 					$url_parts = explode(':', $server);
 					$service_link = ibase_service_attach($url_parts[0], $username, $password);
 					$this->server_info = ibase_server_info($service_link, IBASE_SVC_SERVER_VERSION);
@@ -85,6 +86,11 @@ if (isset($_GET["firebird"])) {
 		static $jush = "firebird";
 
 		public $operators = array("=");
+
+		/** Get the JUSH module inlined in the released driver by the release script */
+		static function jushModule(): string {
+			return ""; // the repository and the source archive load adminer/static/jush/modules/jush-firebird.js
+		}
 	}
 
 

@@ -351,7 +351,7 @@ if ($vendor) {
 			$file
 		);
 		$file = replace(". script(\"fire(qs('#username').form['auth[driver]'], 'change');\")", "", $file);
-		if ($vendor == "sqlite") {
+		if ($vendor == "sqlite" || $vendor == "igdb") {
 			// SQLite doesn't use the server but the value must be preserved for the login form
 			$file = replace_re('~(\t*)echo adminer\(\)->loginFormField\(\s*\'server\',.*?\);\n~s', "\\1echo input_hidden(\"auth[server]\", SERVER);\n", $file);
 		}
@@ -393,7 +393,7 @@ if (function_exists('stripTypes')) {
 	$file = stripTypes($file);
 }
 $file = replace_re("~compile_file\\('([^']+)'(?:, '([^']*)')?\\)~", 'compile_file', $file); // integrate static files
-$replace = 'adminer()->assetUrl("\1")'; // the URL is built by Adminer::assetUrl() so that a plugin can point it elsewhere
+$replace = 'preg_replace("~\\\\\\\\?.*~", "", ME) . "?file=\1&version=' . Adminer\VERSION . '"';
 $file = replace_re('~<\?php echo DIR; \?>static/(default\.css)~', '<?php echo h(' . $replace . '); ?>', $file);
 $file = replace_re('~DIR \. "static/(functions\.js)"~', $replace, $file);
 if ($project != "editor") { // the Editor doesn't use jush
