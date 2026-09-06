@@ -496,12 +496,22 @@ function selectSearch(name) {
 
 let searchColumnId;
 
+/** Check whether query characters appear in value in order
+* @param {string} query
+* @param {string} value
+* @return {boolean}
+*/
+function matchesSearch(query, value) {
+	let index = 0;
+	return [...query].every(char => (index = value.indexOf(char, index) + 1));
+}
+
 /** Print matching columns in a searchable select
 * @param {object} picker
 */
 function searchColumnResults(picker) {
 	const query = picker.query.toLowerCase();
-	picker.options = [...picker.select.options].filter(option => option.value && option.text.toLowerCase().indexOf(query) >= 0);
+	picker.options = [...picker.select.options].filter(option => option.value && matchesSearch(query, option.text.toLowerCase()));
 	picker.active = Math.min(picker.active, picker.options.length - 1);
 	picker.list.innerHTML = '';
 	for (const [index, option] of picker.options.entries()) {
@@ -595,11 +605,26 @@ function setupSearchColumns(context = document) {
 				searchColumnResults(picker);
 			}
 		});
-		input.addEventListener('input', () => {
+		const search = () => {
 			picker.query = input.value;
 			picker.active = 0;
+			if (!input.value) {
+				select.selectedIndex = 0;
+				fire(select, 'change');
+			}
 			searchColumnResults(picker);
-		});
+			const query = input.value.toLowerCase();
+			const option = picker.options.find(option => option.value.toLowerCase() == query || option.text.toLowerCase() == query);
+			if (option) {
+				searchColumnChoose(picker, option);
+			} else if (select.selectedIndex) {
+				select.selectedIndex = 0;
+				fire(select, 'change');
+				input.value = picker.query; // selected() clears the typed query
+			}
+		};
+		input.addEventListener('input', search);
+		input.addEventListener('search', search);
 		input.addEventListener('keydown', event => {
 			if (event.key == 'ArrowDown' || event.key == 'ArrowUp') {
 				if (list.hidden) {
@@ -720,11 +745,7 @@ function shortcutResults() {
 	const input = qs('input', dialog);
 	const results = qs('ul', dialog);
 	const query = input.value.toLowerCase();
-	const matches = value => {
-		let index = 0;
-		return [...query].every(char => (index = value.indexOf(char, index) + 1));
-	};
-	shortcuts.results = shortcuts.links.filter(link => matches(link.label.toLowerCase()));
+	shortcuts.results = shortcuts.links.filter(link => matchesSearch(query, link.label.toLowerCase()));
 	shortcuts.active = Math.min(shortcuts.active, shortcuts.results.length - 1);
 	results.innerHTML = '';
 	if (!shortcuts.results.length) {
@@ -745,6 +766,7 @@ function shortcutResults() {
 		results.append(result);
 	}
 	input.setAttribute('aria-activedescendant', 'shortcut-' + shortcuts.active);
+	results.children[shortcuts.active].scrollIntoView({block: 'nearest'});
 }
 
 /** Open the keyboard shortcuts dialog
@@ -827,7 +849,7 @@ function shortcutSearch() {
 		return;
 	}
 	alterClass(fieldset, 'hidden', false);
-	qs('[name$="[val]"]', fieldset).focus();
+	qs('input.search-column, [name$="[col]"]', fieldset).focus();
 	return false;
 }
 
@@ -858,7 +880,8 @@ function shortcutKeydown(event) {
 		}
 	} else if (isCtrl(event) && event.shiftKey && event.key.toLowerCase() == 'd') {
 		return shortcutDatabase();
-	} else if (isCtrl(event) && event.shiftKey && event.key.toLowerCase() == 'f') {
+	} else if (event.key == '/' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+		&& !(event.target.closest && event.target.closest('input, textarea, select, [contenteditable]'))) {
 		return shortcutSearch();
 	} else if (isCtrl(event) && !event.shiftKey && event.key.toLowerCase() == 'p') {
 		return shortcutOpen();

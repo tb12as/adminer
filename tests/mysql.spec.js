@@ -168,6 +168,17 @@ test('Keyboard navigation', async () => {
 	]);
 });
 
+test('Keyboard shortcut scrolling', async () => {
+	await page.evaluate(() => window.shortcutOpen(Array.from({length: 100}, (_, i) => ({href: '#', label: 'table' + i}))));
+	const content = page.locator('#shortcuts > div');
+	const scrollTop = await content.evaluate(el => el.scrollTop);
+	for (let i = 0; i < 40; i++) {
+		await page.keyboard.press('ArrowDown');
+	}
+	await expect.poll(() => content.evaluate(el => el.scrollTop)).toBeGreaterThan(scrollTop);
+	await page.keyboard.press('Escape');
+});
+
 test('Keyboard database and table search', async () => {
 	await goto(page, '/adminer/?username=ODBC&db=adminer_test&select=albums');
 	await page.locator('a[href="#fieldset-search"].toggle').click();
@@ -183,19 +194,25 @@ test('Keyboard database and table search', async () => {
 	await goto(page, '/adminer/?username=ODBC&db=adminer_test&select=albums');
 	await page.locator('a[href="#fieldset-search"].toggle').click();
 	await expect(page.locator('input.search-column')).toHaveCount(1);
-	await page.keyboard.press('Control+Shift+F');
-	const value = page.locator('[name="where[0][val]"]');
-	await expect(value).toBeFocused();
+	await page.keyboard.press('/');
 	const column = page.locator('input.search-column').first();
+	await expect(column).toBeFocused();
 	await column.focus();
 	const columns = page.locator('.search-column-list').first();
 	await expect(columns).toContainText('id');
 	await expect(columns).toContainText('interpret');
 	await expect(columns).toContainText('title');
-	await column.fill('title');
+	await column.fill('intrp');
 	await expect(columns.getByRole('option')).toHaveCount(1);
-	await column.press('Enter');
+	await expect(columns).toContainText('interpret');
+	await column.fill('title');
 	await expect(page.locator('[name="where[0][col]"]')).toHaveValue('title');
+	await expect(page.locator('input.search-column')).toHaveCount(2);
+	await column.evaluate(input => {
+		input.value = '';
+		input.dispatchEvent(new Event('search', {bubbles: true}));
+	});
+	await expect(page.locator('[name="where[0][col]"]')).toHaveValue('');
 	await expect(page.locator('input.search-column')).toHaveCount(2);
 });
 
