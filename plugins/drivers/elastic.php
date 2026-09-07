@@ -17,7 +17,7 @@ if (isset($_GET["elastic"])) {
 			 * @param bool $log remember the command to print it in the message, use it for the commands modifying data
 			 * @return array|false
 			 */
-			function rootQuery($path, $content = null, $method = 'GET', $log = false) {
+			function rootQuery(string $path, $content = null, string $method = 'GET', bool $log = false) {
 				if ($log) {
 					if (!Queries::$start) {
 						Queries::$start = microtime(true);
@@ -65,7 +65,7 @@ if (isset($_GET["elastic"])) {
 			/** Perform a GET request and cache its result
 			 * @return array|false
 			 */
-			function cachedQuery($path) {
+			function cachedQuery(string $path) {
 				// the indexes can be altered only by a request which redirects afterwards
 				if (!array_key_exists($path, $this->cache)) {
 					$this->cache[$path] = $this->rootQuery($path);
@@ -73,10 +73,8 @@ if (isset($_GET["elastic"])) {
 				return $this->cache[$path];
 			}
 
-			/** Get SSL options for the stream context
-			 * @return mixed[]
-			 */
-			private function sslOptions() {
+			/** Get SSL options for the stream context */
+			private function sslOptions(): array {
 				$return = array();
 				$ssl = adminer()->connectSsl();
 				if ($ssl) {
@@ -98,12 +96,12 @@ if (isset($_GET["elastic"])) {
 			}
 
 			/** Perform query relative to actual selected DB */
-			function query($query, $unbuffered = false) {
+			function query(string $query, bool $unbuffered = false) {
 				if ($query[0] == "S") {
 					// support for global search through all tables
 					if (preg_match('/SELECT 1 FROM ([^ ]+) WHERE (.+) LIMIT ([0-9]+)/', $query, $matches)) {
 						$where = explode(" AND ", $matches[2]);
-						return driver()->select($matches[1], array("*"), $where, array(), array(), $matches[3]);
+						return driver()->select($matches[1], array("*"), $where, array(), array(), (int) $matches[3]);
 					}
 					// number of rows in select, built by count_rows()
 					if (preg_match('~^SELECT COUNT\(\*\) FROM (\S+)( WHERE (.+))?$~s', $query, $matches)) {
@@ -114,12 +112,10 @@ if (isset($_GET["elastic"])) {
 				return false;
 			}
 
-			function attach($server, $username, $password): string {
-				preg_match('~^(https?://)?(.*)~', $server, $match);
-				if (!strpos($match[2], ":")) {
-					$match[2] .= ":9200";
-				}
-				$this->url = ($match[1] ?: "http://") . urlencode($username) . ":" . urlencode($password) . "@$match[2]";
+			function attach(array $server, string $username, string $password): string {
+				$this->url = ($server["scheme"] ?: "http") . "://" . urlencode($username) . ":" . urlencode($password)
+					. "@" . url_host($server["host"]) . ":" . ($server["port"] ?: 9200) . rtrim($server["path"], "/") // the path is used by a reverse proxy
+				;
 				$return = $this->rootQuery('');
 				if (!$return) {
 					return $this->error;
@@ -130,11 +126,11 @@ if (isset($_GET["elastic"])) {
 				return '';
 			}
 
-			function select_db($database) {
+			function select_db(string $database): bool {
 				return true;
 			}
 
-			function quote($string): string {
+			function quote(string $string): string {
 				return $string;
 			}
 		}
@@ -143,7 +139,7 @@ if (isset($_GET["elastic"])) {
 			public $num_rows;
 			private $rows, $fields;
 
-			function __construct($rows) {
+			function __construct(array $rows) {
 				$this->num_rows = count($rows);
 				$this->rows = $rows;
 				$this->fields = array_keys(idx($rows, 0, array()));
@@ -173,18 +169,21 @@ if (isset($_GET["elastic"])) {
 		static $extensions = array("json + allow_url_fopen");
 		static $jush = "elastic";
 
+		static $serverSchemes = array("http", "https");
+		static $serverPath = true;
+
 		public $insertFunctions = array("json");
-		public $operators = array("=", "must", "should", "must_not");
+
+		function operators(?array $tableStatus): array {
+			return array("=", "must", "should", "must_not");
+		}
 
 		/** Get the JUSH module inlined in the released driver by the release script */
 		static function jushModule(): string {
 			return ""; // the repository and the source archive load adminer/static/jush/modules/jush-elastic.js
 		}
 
-		static function connect($server, $username, $password) {
-			if (!preg_match('~^(https?://)?[-a-zA-Z\d.]+(:\d+)?$~', $server)) {
-				return lang('Invalid server.');
-			}
+		static function connect(string $server, string $username, string $password) {
 			$connection = parent::connect($server, $username, $password); // servers accepting any password are refused by Adminer::login()
 			if (is_string($connection)) {
 				return $connection;
@@ -205,7 +204,7 @@ if (isset($_GET["elastic"])) {
 			);
 		}
 
-		function select($table, array $select, array $where, array $group, array $order = array(), $limit = 1, $page = 0, $print = false) {
+		function select(string $table, array $select, array $where, array $group, array $order = array(), int $limit = 1, ?int $page = 0, bool $print = false) {
 			$fields = fields($table);
 			$data = array();
 			if ($select != array("*")) {
@@ -266,7 +265,7 @@ if (isset($_GET["elastic"])) {
 		* @param list<string> $where
 		* @return int|false
 		*/
-		function countRows($table, array $where) {
+		function countRows(string $table, array $where) {
 			$bool = $this->buildQuery($where, fields($table));
 			$return = $this->conn->rootQuery(urlencode($table) . "/_count", ($bool ? array("query" => $bool) : null));
 			return ($return === false ? false : $return["count"]);
@@ -275,9 +274,8 @@ if (isset($_GET["elastic"])) {
 		/** Build the search query from the conditions
 		* @param list<string> $where
 		* @param mixed[] $fields result of fields()
-		* @return mixed[]
 		*/
-		private function buildQuery(array $where, array $fields) {
+		private function buildQuery(array $where, array $fields): array {
 			$return = array();
 			foreach ($where as $val) {
 				if (preg_match('~^\((.+ OR .+)\)$~', $val, $matches)) {
@@ -315,9 +313,8 @@ if (isset($_GET["elastic"])) {
 
 		/** Convert the values to the types expected by Elasticsearch
 		* @param string[] $record
-		* @return mixed[]
 		*/
-		private function castRecord($table, array $record) {
+		private function castRecord(string $table, array $record): array {
 			$fields = fields($table);
 			$return = array();
 			foreach ($record as $key => $val) {
@@ -338,7 +335,7 @@ if (isset($_GET["elastic"])) {
 			return $return;
 		}
 
-		function update($table, array $set, $queryWhere, $limit = 0, $separator = "\n") {
+		function update(string $table, array $set, string $queryWhere, int $limit = 0, string $separator = "\n") {
 			//! use $limit
 			$parts = preg_split('~ *= *~', $queryWhere);
 			if (count($parts) == 2) {
@@ -351,7 +348,7 @@ if (isset($_GET["elastic"])) {
 			return false;
 		}
 
-		function insert($type, array $record) {
+		function insert(string $type, array $record) {
 			$query = "$type/_doc/";
 			if (isset($record["_id"]) && $record["_id"] != "NULL") {
 				$query .= $record["_id"];
@@ -371,7 +368,7 @@ if (isset($_GET["elastic"])) {
 			return $response['result'];
 		}
 
-		function delete($table, $queryWhere, $limit = 0) {
+		function delete(string $table, string $queryWhere, int $limit = 0) {
 			//! use $limit
 			$ids = array();
 			if (idx($_GET["where"], "_id")) {
@@ -400,37 +397,41 @@ if (isset($_GET["elastic"])) {
 		}
 	}
 
-	function support($feature) {
+	function support(string $feature): bool {
 		return preg_match('~^(single_db|table|columns)$~', $feature);
 	}
 
-	function logged_user() {
+	function logged_user(): string {
 		$credentials = adminer()->credentials();
 
 		return $credentials[1];
 	}
 
-	function get_databases($flush) {
+	function get_databases(bool $flush): array {
 		return array("data");
 	}
 
-	function limit($query, $where, $limit, $offset = 0, $separator = " ") {
+	function limit(string $query, string $where, int $limit, int $offset = 0, string $separator = " "): string {
 		return " $query$where" . ($limit ? $separator . "LIMIT $limit" . ($offset ? " OFFSET $offset" : "") : "");
 	}
 
-	function collations() {
+	function limit1(string $table, string $query, string $where, string $separator = "\n"): string {
+		return limit($query, $where, 1, 0, $separator);
+	}
+
+	function collations(): array {
 		return array();
 	}
 
-	function db_collation($db, $collations) {
+	function db_collation(string $db, array $collations) {
 	}
 
-	function count_tables($databases) {
+	function count_tables(array $databases): array {
 		$return = connection()->cachedQuery('_aliases');
 		return array("data" => ($return ? count($return) : 0));
 	}
 
-	function tables_list() {
+	function tables_list(): array {
 		$aliases = connection()->cachedQuery('_aliases');
 		if (empty($aliases)) {
 			return array();
@@ -449,7 +450,7 @@ if (isset($_GET["elastic"])) {
 		return $tables;
 	}
 
-	function table_status($name = "", $fast = false) {
+	function table_status(string $name = "", bool $fast = false): array {
 		$stats = connection()->cachedQuery('_stats');
 		$aliases = connection()->cachedQuery('_aliases');
 
@@ -493,7 +494,7 @@ if (isset($_GET["elastic"])) {
 		return $result;
 	}
 
-	function format_index_status($name, $index) {
+	function format_index_status(string $name, array $index): array {
 		return array(
 			"Name" => $name,
 			"Engine" => "Lucene",
@@ -506,7 +507,7 @@ if (isset($_GET["elastic"])) {
 		);
 	}
 
-	function format_alias_status($name, $index) {
+	function format_alias_status(string $name, array $index): array {
 		return array(
 			"Name" => $name,
 			"Engine" => "view",
@@ -514,7 +515,7 @@ if (isset($_GET["elastic"])) {
 		);
 	}
 
-	function is_view($table_status) {
+	function is_view(array $table_status): bool {
 		return $table_status["Engine"] == "view";
 	}
 
@@ -523,20 +524,20 @@ if (isset($_GET["elastic"])) {
 		return array("select" => implode("\n", array_keys($return)));
 	}
 
-	function error() {
+	function error(): string {
 		return h(connection()->error);
 	}
 
-	function information_schema($db) {
+	function information_schema(string $db) {
 	}
 
-	function indexes($table, $connection2 = null) {
+	function indexes(string $table, ?Db $connection2 = null): array {
 		return array(
 			array("type" => "PRIMARY", "columns" => array("_id")),
 		);
 	}
 
-	function fields($table) {
+	function fields(string $table): array {
 		$result = array(
 			"_id" => array(
 				"field" => "_id",
@@ -553,11 +554,8 @@ if (isset($_GET["elastic"])) {
 		return $result;
 	}
 
-	/** Add fields of the mapping to the result, recurse into object and nested fields
-	* @param mixed[] $properties
-	* @param mixed[] $result
-	*/
-	function elastic_fields(array $properties, $prefix, array &$result, $nested = false) {
+	/** Add fields of the mapping to the result, recurse into object and nested fields */
+	function elastic_fields(array $properties, string $prefix, array &$result, bool $nested = false): void {
 		foreach ($properties as $name => $field) {
 			$name = "$prefix$name";
 			if ($field["properties"]) {
@@ -596,7 +594,7 @@ if (isset($_GET["elastic"])) {
 	* @param string $path dot separated
 	* @return mixed
 	*/
-	function elastic_value($source, $path) {
+	function elastic_value($source, string $path) {
 		if ($path == "" || !is_array($source)) {
 			return $source;
 		}
@@ -614,29 +612,29 @@ if (isset($_GET["elastic"])) {
 		return (array_key_exists($key, $source) ? elastic_value($source[$key], $rest) : null);
 	}
 
-	function foreign_keys($table) {
+	function foreign_keys(string $table): array {
 		return array();
 	}
 
-	function table($idf) {
+	function table(string $idf): string {
 		return $idf;
 	}
 
-	function idf_escape($idf) {
+	function idf_escape(string $idf): string {
 		return $idf;
 	}
 
-	function convert_field($field) {
+	function convert_field(array $field) {
 	}
 
-	function unconvert_field($field, $return) {
+	function unconvert_field(array $field, string $return): string {
 		return $return;
 	}
 
-	function fk_support($table_status) {
+	function fk_support(array $table_status) {
 	}
 
-	function found_rows($table_status, $where) {
+	function found_rows(array $table_status, array $where) {
 	}
 
 	function auto_increment(): string {
@@ -646,7 +644,7 @@ if (isset($_GET["elastic"])) {
 	/** Alter type
 	 * @return mixed
 	 */
-	function alter_table($table, $name, $fields, $foreign, $comment, $engine, $collation, $auto_increment, $partitioning) {
+	function alter_table(string $table, string $name, array $fields, array $foreign, ?string $comment, string $engine, string $collation, string $auto_increment, ?array $partitioning) {
 		$properties = array();
 		foreach ($fields as $f) {
 			if (!$f[1]) {

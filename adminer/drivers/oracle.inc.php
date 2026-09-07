@@ -6,6 +6,13 @@ add_driver("oracle", "Oracle beta");
 if (isset($_GET["oracle"])) {
 	define('Adminer\DRIVER', "oracle");
 
+	/** Join the server name to the Easy Connect syntax: host:port/service
+	* @param Server $server
+	*/
+	function easy_connect(array $server): string {
+		return url_host($server["host"]) . ($server["port"] != "" ? ":$server[port]" : "") . $server["path"];
+	}
+
 	if (extension_loaded("oci8") && $_GET["ext"] != "pdo") {
 		class Db extends SqlDb {
 			public $extension = "oci8";
@@ -20,8 +27,8 @@ if (isset($_GET["oracle"])) {
 				$this->error = $error;
 			}
 
-			function attach(string $server, string $username, string $password): string {
-				$this->link = @oci_new_connect($username, $password, $server, "AL32UTF8");
+			function attach(array $server, string $username, string $password): string {
+				$this->link = @oci_new_connect($username, $password, easy_connect($server), "AL32UTF8");
 				if ($this->link) {
 					$this->server_info = oci_server_version($this->link);
 					return '';
@@ -111,8 +118,8 @@ if (isset($_GET["oracle"])) {
 			public $extension = "PDO_OCI";
 			public $_current_db;
 
-			function attach(string $server, string $username, string $password): string {
-				return $this->dsn("oci:dbname=//$server;charset=AL32UTF8", $username, $password);
+			function attach(array $server, string $username, string $password): string {
+				return $this->dsn("oci:dbname=//" . easy_connect($server) . ";charset=AL32UTF8", $username, $password);
 			}
 
 			function select_db(string $database) {
@@ -129,6 +136,8 @@ if (isset($_GET["oracle"])) {
 		static $extensions = array("OCI8", "PDO_OCI");
 		static $jush = "oracle";
 
+		static $serverPath = true; // the service name in the Easy Connect syntax
+
 		public $insertFunctions = array( //! no parentheses
 			"date" => "current_date",
 			"timestamp" => "current_timestamp",
@@ -139,9 +148,12 @@ if (isset($_GET["oracle"])) {
 			"char|clob" => "||",
 		);
 
-		public $operators = array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL", "SQL");
 		public $functions = array("length", "lower", "round", "upper");
 		public $grouping = array("avg", "count", "count distinct", "max", "min", "sum");
+
+		function operators(?array $tableStatus): array {
+			return array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL", "SQL");
+		}
 
 		function __construct(Db $connection) {
 			parent::__construct($connection);
@@ -183,6 +195,27 @@ if (isset($_GET["oracle"])) {
 
 		function hasCStyleEscapes(): bool {
 			return true;
+		}
+
+		function allFields(): array {
+			$return = array();
+			$view = views_table("view_name");
+			$rows = get_rows('SELECT c.table_name "tab", c.column_name "field", c.data_type "type", c.nullable "nullable",
+	c.data_precision "precision", c.data_scale "scale", c.char_col_decl_length "char_length"
+FROM all_tab_columns c
+WHERE c.table_name IN (
+	SELECT table_name FROM all_tables WHERE tablespace_name = ' . q(DB) . where_owner(" AND ") . "
+	UNION SELECT view_name FROM $view
+)" . where_owner(" AND ", "c.owner") . '
+ORDER BY c.table_name, c.column_id', $this->conn);
+			foreach ($rows as $row) {
+				$length = "$row[precision],$row[scale]";
+				$row["length"] = ($length == "," ? $row["char_length"] : $length); //! int
+				$row["type"] = strtolower($row["type"]);
+				$row["null"] = ($row["nullable"] == "Y");
+				$return[$row["tab"]][] = $row;
+			}
+			return $return;
 		}
 	}
 

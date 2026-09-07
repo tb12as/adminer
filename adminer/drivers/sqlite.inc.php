@@ -11,8 +11,8 @@ if (isset($_GET["sqlite"])) {
 			public $extension = "SQLite3";
 			private $link;
 
-			function attach(string $filename, string $username, string $password): string {
-				$this->link = new \SQLite3($filename);
+			function attach(array $server, string $username, string $password): string {
+				$this->link = new \SQLite3($server["path"]);
 				$version = \SQLite3::version();
 				$this->server_info = $version["versionString"];
 				return '';
@@ -73,8 +73,8 @@ if (isset($_GET["sqlite"])) {
 		abstract class SqliteDb extends PdoDb {
 			public $extension = "PDO_SQLite";
 
-			function attach(string $filename, string $username, string $password): string {
-				return $this->dsn(DRIVER . ":$filename", "", "");
+			function attach(array $server, string $username, string $password): string {
+				return $this->dsn(DRIVER . ":" . $server["path"], "", "");
 			}
 
 			function quote(string $string): string {
@@ -89,8 +89,8 @@ if (isset($_GET["sqlite"])) {
 
 	if (class_exists('Adminer\SqliteDb')) {
 		class Db extends SqliteDb {
-			function attach(string $filename, string $username, string $password): string {
-				parent::attach($filename, $username, $password);
+			function attach(array $server, string $username, string $password): string {
+				parent::attach($server, $username, $password);
 				$this->query("PRAGMA foreign_keys = 1");
 				$this->query("PRAGMA busy_timeout = 500");
 				return '';
@@ -99,7 +99,7 @@ if (isset($_GET["sqlite"])) {
 			function select_db(string $filename): bool {
 				$query = "ATTACH " . $this->quote(preg_match("~(^[/\\\\]|:)~", $filename) ? $filename : dirname($_SERVER["SCRIPT_FILENAME"]) . "/$filename") . " AS a";
 				if (is_readable($filename) && $this->query($query)) {
-					return !self::attach($filename, '', '');
+					return !self::attach(server_parts(array("path" => $filename)), '', '');
 				}
 				return false;
 			}
@@ -113,6 +113,8 @@ if (isset($_GET["sqlite"])) {
 		static $jush = "sqlite";
 		static $passwords = false;
 
+		static $serverFile = true; // the server name is not used, the file is selected as the database
+
 		protected $types = array(array("integer" => 0, "real" => 0, "numeric" => 0, "text" => 0, "blob" => 0));
 
 		public $insertFunctions = array(); // "text" => "date('now')/time('now')/datetime('now')",
@@ -122,9 +124,18 @@ if (isset($_GET["sqlite"])) {
 			"text" => "||",
 		);
 
-		public $operators = array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL", "SQL"); // REGEXP can be user defined function
+		public $fulltextOperator = "MATCH";
 		public $functions = array("hex", "length", "lower", "round", "unixepoch", "upper");
 		public $grouping = array("avg", "count", "count distinct", "group_concat", "max", "min", "sum");
+
+		function operators(?array $tableStatus): array {
+			$return = array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL"); // REGEXP can be user defined function
+			if (preg_match('~^fts\d+$~i', (string) idx($tableStatus, "Engine"))) { // table_status() puts the module of a virtual table in Engine
+				$return[] = "MATCH"; // FTS accepts it on a single column and on the whole table
+			}
+			$return[] = "SQL";
+			return $return;
+		}
 
 		static function connect(string $server, string $username, string $password) {
 			return parent::connect(":memory:", "", ""); // the password is refused by Adminer::login()
@@ -160,6 +171,43 @@ if (isset($_GET["sqlite"])) {
 			return $return;
 		}
 
+		/** Check whether the table is a virtual table
+		* @param TableStatus $table_status
+		*/
+		private function isVirtual(array $table_status): bool {
+			$engine = $table_status["Engine"]; // table_status() puts the module of a virtual table there
+			return $engine != "" && !in_array($engine, array_merge(array("view"), $this->engines()));
+		}
+
+		function supportsIndex(array $table_status): bool {
+			return !is_view($table_status) && !$this->isVirtual($table_status); // CREATE INDEX is rejected on a virtual table
+		}
+
+		function supportsAlterIndex(array $table_status): bool {
+			return $this->supportsIndex($table_status);
+		}
+
+		function supportsAlterTable(array $tableStatus): bool {
+			return !$this->isVirtual($tableStatus); // a virtual table can be only renamed and dropped
+		}
+
+		function shadowTables(string $table): array {
+			$return = array();
+			if (min_version(3.37)) {
+				foreach (get_vals("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'shadow' ORDER BY name") as $name) {
+					// a shadow table is named after the virtual table using it and a single word, e.g. posts_fts_data
+					if (preg_match('(^' . preg_quote($table) . '_[^_]*$)', $name)) {
+						$return[] = array("table" => $name, "ns" => "");
+					}
+				}
+			}
+			return $return;
+		}
+
+		function fulltextSql(string $name, array $index, string $query, bool $boolean): string {
+			return idf_escape($name) . " MATCH " . q($query); // the index is named after the FTS table
+		}
+
 		function insertUpdate(string $table, array $rows, array $primary) {
 			$values = array();
 			foreach ($rows as $set) {
@@ -185,9 +233,23 @@ if (isset($_GET["sqlite"])) {
 
 		function allFields(): array {
 			$return = array();
-			foreach (tables_list() as $table => $type) {
-				foreach (fields($table) as $field) {
-					$return[$table][] = $field;
+			if (min_version(3.16)) { // table-valued pragma functions, they get all columns in a single query
+				$rows = get_rows('SELECT m.name AS tab, p.name AS field, p.type, p."notnull", p.pk AS ' . idf_escape("primary") . "
+FROM sqlite_master m, pragma_table_" . (min_version(3.31) ? "x" : "") . "info(m.name) p
+WHERE m.type IN ('table', 'view')" . (min_version(3.31) ? "
+AND p.hidden != 1" : "") . (min_version(3.37) ? "
+AND m.name NOT IN (SELECT name FROM pragma_table_list WHERE type = 'shadow')" : "") . "
+ORDER BY (m.name LIKE 'sqlite_%'), m.name, p.cid", $this->conn);
+				foreach ($rows as $row) {
+					$row["type"] = type_affinity($row["type"]);
+					$row["null"] = !$row["notnull"];
+					$return[$row["tab"]][] = $row;
+				}
+			} else {
+				foreach (tables_list() as $table => $type) {
+					foreach (fields($table) as $field) {
+						$return[$table][] = $field;
+					}
 				}
 			}
 			return $return;
@@ -227,8 +289,16 @@ if (isset($_GET["sqlite"])) {
 		return get_current_user(); // should return effective user
 	}
 
+	/** Get the module of a virtual table, empty string for a regular table */
+	function virtual_module(string $sql): string {
+		return (preg_match('~^CREATE\s+VIRTUAL\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"[^"]*+"|`[^`]*+`|\[[^\]]*+\]|[^\s(]+)\s+USING\s+([a-z0-9_]+)~i', $sql, $match) ? $match[1] : "");
+	}
+
 	function tables_list(): array {
-		return get_key_vals("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY (name LIKE 'sqlite_%'), name");
+		// the shadow tables of virtual tables are listed only by table_status()
+		return get_key_vals("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view')"
+			. (min_version(3.37) ? " AND name NOT IN (SELECT name FROM pragma_table_list WHERE type = 'shadow')" : "") . "
+ORDER BY (name LIKE 'sqlite_%'), name");
 	}
 
 	function count_tables(array $databases): array {
@@ -258,16 +328,19 @@ if (isset($_GET["sqlite"])) {
 		}
 		foreach (
 			get_rows(
-				"SELECT name AS Name, type AS Engine, sql, 'rowid' AS Oid, '' AS Auto_increment FROM sqlite_master WHERE type IN ('table', 'view') "
+				"SELECT name AS Name, type AS Engine, sql, 'rowid' AS Oid, '' AS Auto_increment"
+				. (min_version(3.37) ? ", name IN (SELECT name FROM pragma_table_list WHERE type = 'shadow') AS dependent" : "")
+				. " FROM sqlite_master WHERE type IN ('table', 'view') "
 				. ($name != "" ? "AND name = " . q($name) : "ORDER BY (name LIKE 'sqlite_%'), name")
 			) as $row
 		) {
 			if ($row["Engine"] == "table") {
-				$suffix = preg_replace('~.*\)~s', '', $row["sql"]); // table options are after the last parenthesis
-				$row["Engine"] = implode(", ", array_filter(array(
+				$sql = preg_replace('~(?:\s|--[^\n]*|/\*.*?\*/)+$~s', '', $row["sql"]); // the definition can end with a comment
+				$suffix = preg_replace('~.*\)~s', '', $sql); // table options are after the last parenthesis
+				$row["Engine"] = virtual_module($row["sql"]) ?: (implode(", ", array_filter(array(
 					(preg_match('~\bSTRICT\b~i', $suffix) ? "STRICT" : 0),
 					(preg_match('~\bWITHOUT\s+ROWID\b~i', $suffix) ? "WITHOUT ROWID" : 0),
-				))) ?: "table";
+				))) ?: "table");
 			}
 			unset($row["sql"]);
 			$row["Rows"] = idx($rows, $row["Name"], 0);
@@ -289,6 +362,18 @@ if (isset($_GET["sqlite"])) {
 		return !get_val("SELECT sqlite_compileoption_used('OMIT_FOREIGN_KEY')");
 	}
 
+	/** Get the type affinity of a declared column type */
+	function type_affinity(string $type): string {
+		$type = strtolower($type);
+		return (preg_match('~int~i', $type) ? "integer"
+			: (preg_match('~char|clob|text~i', $type) ? "text"
+			: (preg_match('~blob~i', $type) ? "blob"
+			: (preg_match('~real|floa|doub~i', $type) ? "real"
+			: (preg_match('~any~i', $type) ? "any"
+			: "numeric"
+		)))));
+	}
+
 	function fields(string $table): array {
 		$return = array();
 		$sql = get_val("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = " . q($table));
@@ -296,19 +381,17 @@ if (isset($_GET["sqlite"])) {
 		if (!preg_match('~^sqlite(_temp)?_(master|schema)$~', $table)) {
 			$privileges += array("insert" => 1, "update" => 1);
 		}
+		$fts = preg_match('~^fts\d+$~i', virtual_module($sql)); // FTS declares the columns without a type but stores strings
 		foreach (get_rows("PRAGMA table_" . (min_version(3.31) ? "x" : "") . "info(" . table($table) . ")") as $row) {
+			if ($row["hidden"] == 1) { // the columns of a virtual table usable only in a condition; generated columns have 2 and 3
+				continue;
+			}
 			$name = $row["name"];
 			$type = strtolower($row["type"]);
 			$default = $row["dflt_value"];
 			$return[$name] = array(
 				"field" => $name,
-				"type" => (preg_match('~int~i', $type) ? "integer"
-					: (preg_match('~char|clob|text~i', $type) ? "text"
-					: (preg_match('~blob~i', $type) ? "blob"
-					: (preg_match('~real|floa|doub~i', $type) ? "real"
-					: (preg_match('~any~i', $type) ? "any"
-					: "numeric"
-				))))),
+				"type" => ($fts ? "text" : type_affinity($type)),
 				"full_type" => $type,
 				"default" => (preg_match("~^'(.*)'$~", $default, $match) ? str_replace("''", "'", $match[1]) : ($default == "NULL" ? null : $default)),
 				"null" => !$row["notnull"],
@@ -319,19 +402,22 @@ if (isset($_GET["sqlite"])) {
 				$return[$name]["auto_increment"] = true;
 			}
 		}
-		$idf = '(("[^"]*+")+|[a-z0-9_]+)';
-		preg_match_all('~' . $idf . '\s+text\s+COLLATE\s+(\'[^\']+\'|\S+)~i', $sql, $matches, PREG_SET_ORDER);
+		$idf = '[(,]\s*(("[^"]*+")+|[a-z0-9_]+)'; // column name at the beginning of a column definition
+		$rest = '(?:[^,()\']|\'[^\']*+\'|\([^)]*+\))*?'; // rest of the column definition, never crossing to the next column
+		preg_match_all('~' . $idf . '\s+text\b' . $rest . 'COLLATE\s+(\'[^\']+\'|[a-z0-9_]+)~i', $sql, $matches, PREG_SET_ORDER);
 		foreach ($matches as $match) {
 			$name = str_replace('""', '"', preg_replace('~^"|"$~', '', $match[1]));
 			if ($return[$name]) {
 				$return[$name]["collation"] = trim($match[3], "'");
 			}
 		}
-		preg_match_all('~' . $idf . '\s.*GENERATED ALWAYS AS \((.+)\) (STORED|VIRTUAL)~i', $sql, $matches, PREG_SET_ORDER);
+		preg_match_all('~' . $idf . '\s' . $rest . 'GENERATED\s+ALWAYS\s+AS\s*\((.+?)\)\s+(STORED|VIRTUAL)~i', $sql, $matches, PREG_SET_ORDER);
 		foreach ($matches as $match) {
 			$name = str_replace('""', '"', preg_replace('~^"|"$~', '', $match[1]));
-			$return[$name]["default"] = $match[3];
-			$return[$name]["generated"] = strtoupper($match[4]);
+			if ($return[$name]) {
+				$return[$name]["default"] = $match[3];
+				$return[$name]["generated"] = strtoupper($match[4]);
+			}
 		}
 		return $return;
 	}
@@ -340,6 +426,10 @@ if (isset($_GET["sqlite"])) {
 		$connection2 = connection($connection2);
 		$return = array();
 		$sql = get_val("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = " . q($table), 0, $connection2);
+		if (preg_match('~^fts\d+$~i', virtual_module($sql))) {
+			// the index is named after the table because the column of this name searches all columns at once
+			return array($table => array("type" => "FULLTEXT", "columns" => array_keys(fields($table)), "lengths" => array(), "descs" => array()));
+		}
 		if (preg_match('~\bPRIMARY\s+KEY\s*\((([^)"]+|"[^"]*"|`[^`]*`)++)~i', $sql, $match)) {
 			$return[""] = array("type" => "PRIMARY", "columns" => array(), "lengths" => array(), "descs" => array());
 			preg_match_all('~((("[^"]*+")+|(?:`[^`]*+`)+)|(\S+))(\s+(ASC|DESC))?(,\s*|$)~i', $match[1], $matches, PREG_SET_ORDER);
@@ -430,7 +520,7 @@ if (isset($_GET["sqlite"])) {
 		}
 		try {
 			$link = new Db();
-			$link->attach($db, '', '');
+			$link->attach(server_parts(array("path" => $db)), '', '');
 		} catch (\Exception $ex) {
 			connection()->error = $ex->getMessage();
 			return false;
@@ -442,7 +532,7 @@ if (isset($_GET["sqlite"])) {
 	}
 
 	function drop_databases(array $databases): bool {
-		connection()->attach(":memory:", '', ''); // to unlock file, doesn't work in PDO on Windows
+		connection()->attach(server_parts(array("path" => ":memory:")), '', ''); // to unlock file, doesn't work in PDO on Windows
 		foreach ($databases as $db) {
 			if (!check_sqlite_name($db)) {
 				return false;
@@ -459,7 +549,7 @@ if (isset($_GET["sqlite"])) {
 		if (!check_sqlite_name($name)) {
 			return false;
 		}
-		connection()->attach(":memory:", '', '');
+		connection()->attach(server_parts(array("path" => ":memory:")), '', '');
 		connection()->error = lang('File exists.');
 		return @rename(DB, $name);
 	}
@@ -744,7 +834,7 @@ if (isset($_GET["sqlite"])) {
 	function create_sql(string $table, ?bool $auto_increment, string $style): string {
 		$return = get_val("SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = " . q($table));
 		foreach (indexes($table) as $name => $index) {
-			if ($name == '') {
+			if ($name == '' || $index['type'] == 'FULLTEXT') { // FULLTEXT is the pseudo-index of an FTS table, it is a part of CREATE VIRTUAL TABLE
 				continue;
 			}
 			$return .= ";\n\n" . index_sql($table, $index['type'], $name, "(" . implode(", ", array_map('Adminer\idf_escape', $index['columns'])) . ")");
@@ -794,6 +884,6 @@ if (isset($_GET["sqlite"])) {
 	}
 
 	function support(string $feature): bool {
-		return preg_match('~^(check|columns|database|drop_col|dump|indexes|descidx|move_col|sql|status|table|transaction_ddl|trigger|variables|view|view_trigger)$~', $feature);
+		return preg_match('~^(check|columns|database|drop_col|dump|fast_status|indexes|descidx|move_col|sql|status|table|transaction_ddl|trigger|variables|view|view_trigger)$~', $feature);
 	}
 }

@@ -4,7 +4,7 @@
 let autocompleter; // set in adminer.inc.php
 
 /** Load syntax highlighting
-* @param {string} version first three characters of database system version
+* @param {string} version version of the database system as used in its documentation URLs
 * @param {string} [vendor]
 */
 function syntaxHighlighting(version, vendor) {
@@ -24,6 +24,9 @@ function syntaxHighlighting(version, vendor) {
 					;
 					if (vendor != 'cockroach') {
 						obj[key] = obj[key].replace('/docs/current', '/docs/' + version); // PostgreSQL
+					}
+					if (/^\d\d$/.test(version)) { // the version of another system would make up a directory Oracle doesn't have
+						obj[key] = obj[key].replace('/oracle-database/19/', '/oracle-database/' + version + '/');
 					}
 				}
 			}

@@ -16,21 +16,22 @@ if (!defined('Adminer\DRIVER')) {
 				parent::init();
 			}
 
-			function attach(string $server, string $username, string $password): string {
+			function attach(array $server, string $username, string $password): string {
 				mysqli_report(MYSQLI_REPORT_OFF); // stays between requests, required since PHP 8.1
-				list($host, $port) = host_port($server);
+				$port = $server["port"];
+				$empty = ("$server[host]$port$server[socket]" == ""); // use the settings from php.ini
 				$ssl = adminer()->connectSsl();
 				$use_ssl = ($ssl && ($ssl['key'] || $ssl['cert'] || $ssl['ca'] || isset($ssl['verify']))); // the array can hold options for other drivers only
 				if ($use_ssl) {
 					$this->ssl_set($ssl['key'], $ssl['cert'], $ssl['ca'], '', '');
 				}
 				$return = @$this->real_connect(
-					($server != "" ? $host : ini_get("mysqli.default_host")),
-					($server . $username != "" ? $username : ini_get("mysqli.default_user")),
-					($server . $username . $password != "" ? $password : ini_get("mysqli.default_pw")),
+					(!$empty ? $server["host"] : ini_get("mysqli.default_host")),
+					(!$empty || $username != "" ? $username : ini_get("mysqli.default_user")),
+					(!$empty || $username . $password != "" ? $password : ini_get("mysqli.default_pw")),
 					null,
-					(is_numeric($port) ? intval($port) : ini_get("mysqli.default_port")),
-					(is_numeric($port) ? null : $port),
+					($port != "" ? intval($port) : ini_get("mysqli.default_port")),
+					($port != "" ? null : $server["socket"]),
 					($use_ssl ? ($ssl['verify'] !== false ? MYSQLI_CLIENT_SSL : 64) : 0) // 64 - MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT available since PHP 5.6.16
 				);
 				$this->options(MYSQLI_OPT_LOCAL_INFILE, 0);
@@ -63,14 +64,16 @@ if (!defined('Adminer\DRIVER')) {
 		class Db extends SqlDb {
 			/** @var resource */ private $link;
 
-			function attach(string $server, string $username, string $password): string {
+			function attach(array $server, string $username, string $password): string {
 				if (ini_bool("mysql.allow_local_infile")) {
 					return lang('Disable %s or enable the %s or %s extension.', "'mysql.allow_local_infile'", "MySQLi", "PDO_MySQL");
 				}
+				$port = "$server[port]$server[socket]";
+				$name = $server["host"] . ($port != "" ? ":$port" : ""); // host:port | host:/tmp/mysql.sock
 				$this->link = @mysql_connect(
-					($server != "" ? $server : ini_get("mysql.default_host")),
-					($server . $username != "" ? $username : ini_get("mysql.default_user")),
-					($server . $username . $password != "" ? $password : ini_get("mysql.default_password")),
+					($name != "" ? $name : ini_get("mysql.default_host")),
+					($name . $username != "" ? $username : ini_get("mysql.default_user")),
+					($name . $username . $password != "" ? $password : ini_get("mysql.default_password")),
 					true,
 					131072 // CLIENT_MULTI_RESULTS for CALL
 				);
@@ -151,7 +154,7 @@ if (!defined('Adminer\DRIVER')) {
 		class Db extends PdoDb {
 			public $extension = "PDO_MySQL";
 
-			function attach(string $server, string $username, string $password): string {
+			function attach(array $server, string $username, string $password): string {
 				$options = array(\PDO::MYSQL_ATTR_LOCAL_INFILE => false);
 				if (isset($_GET["select"])) { // we don't have SqlDb::$untrusted here yet
 					$options[\PDO::MYSQL_ATTR_MULTI_STATEMENTS] = false; // can be set only when connecting
@@ -171,9 +174,11 @@ if (!defined('Adminer\DRIVER')) {
 						$options[\PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = $ssl['verify'];
 					}
 				}
-				list($host, $port) = host_port($server);
+				$host = $server["host"];
+				$port = $server["port"];
+				$socket = $server["socket"];
 				return $this->dsn(
-					"mysql:charset=utf8" . ($host != "" ? ";host=$host" : '') . ($port ? (is_numeric($port) ? ";port=" : ";unix_socket=") . $port : ""),
+					"mysql:charset=utf8" . ($host != "" ? ";host=$host" : '') . ($port != "" ? ";port=$port" : ($socket != "" ? ";unix_socket=$socket" : "")),
 					$username,
 					$password,
 					$options
@@ -203,11 +208,16 @@ if (!defined('Adminer\DRIVER')) {
 		static $extensions = array("MySQLi", "MySQL", "PDO_MySQL");
 		static $jush = "sql"; // JUSH identifier
 
+		static $serverSocket = true;
+
 		public $unsigned = array("unsigned", "zerofill", "unsigned zerofill");
-		public $operators = array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "REGEXP", "IN", "FIND_IN_SET", "IS NULL", "NOT LIKE", "NOT REGEXP", "NOT IN", "IS NOT NULL", "SQL");
 		public $functions = array("char_length", "date", "from_unixtime", "lower", "round", "floor", "ceil", "sec_to_time", "time_to_sec", "upper");
 		public $grouping = array("avg", "count", "count distinct", "group_concat", "max", "min", "sum");
 		public $partitionBy = array("HASH", "LINEAR HASH", "KEY", "LINEAR KEY", "RANGE", "LIST");
+
+		function operators(?array $tableStatus): array {
+			return array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "REGEXP", "IN", "FIND_IN_SET", "IS NULL", "NOT LIKE", "NOT REGEXP", "NOT IN", "IS NOT NULL", "SQL");
+		}
 
 		static function connect(string $server, string $username, string $password) {
 			$connection = parent::connect($server, $username, $password);
@@ -526,14 +536,24 @@ if (!defined('Adminer\DRIVER')) {
 	*/
 	function table_status(string $name = "", bool $fast = false): array {
 		$return = array();
-		foreach (
-			get_rows(
-				$fast
-				? "SELECT TABLE_NAME AS Name, ENGINE AS Engine, TABLE_COMMENT AS Comment FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() "
-					. ($name != "" ? "AND TABLE_NAME = " . q($name) : "ORDER BY Name")
-				: "SHOW TABLE STATUS" . ($name != "" ? " LIKE " . q(addcslashes($name, "%_\\")) : "")
-			) as $row
-		) {
+		$query = "SELECT ENGINE AS Engine, TABLE_NAME AS Name, TABLE_COMMENT AS Comment FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() "
+			. ($name != "" ? "AND TABLE_NAME = " . q($name) : "ORDER BY Name");
+		// the servers return an error instead of the Comment of a table which cannot be opened, MySQL repeats it also in all the following tables
+		$schema = array();
+		foreach (($fast ? array() : get_rows($query)) as $row) {
+			$schema[$row["Name"]] = $row;
+		}
+		$previous = null;
+		foreach (get_rows($fast ? $query : "SHOW TABLE STATUS" . ($name != "" ? " LIKE " . q(addcslashes($name, "%_\\")) : "")) as $row) {
+			$original = idx($schema, $row["Name"]);
+			if ($original) {
+				if ($row["Comment"] !== $original["Comment"] && $row["Comment"] !== $previous) { // an error instead of the comment, the following tables only repeat it
+					$row["Error"] = $row["Comment"];
+				}
+				$previous = $row["Comment"];
+				$row["Comment"] = $original["Comment"];
+				$row["Engine"] = $original["Engine"]; // MariaDB returns NULL for a table which cannot be opened, unlike information_schema
+			}
 			if ($row["Engine"] == "InnoDB") {
 				// ignore internal comment, unnecessary since MySQL 5.1.21
 				$row["Comment"] = preg_replace('~(?:(.+); )?InnoDB free: .*~', '\1', $row["Comment"]);

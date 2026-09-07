@@ -26,7 +26,7 @@ if (isset($_GET["mssql"])) {
 				$this->error = rtrim($this->error);
 			}
 
-			function attach(string $server, string $username, string $password): string {
+			function attach(array $server, string $username, string $password): string {
 				sqlsrv_configure("WarningsReturnAsErrors", 0); // a message from the server would stop sqlsrv_next_result(), e.g. between the result sets of sp_helpdb
 				$connection_info = array("UID" => $username, "PWD" => $password, "CharacterSet" => "UTF-8");
 				$ssl = adminer()->connectSsl();
@@ -40,8 +40,8 @@ if (isset($_GET["mssql"])) {
 				if ($db != "") {
 					$connection_info["Database"] = $db;
 				}
-				list($host, $port) = host_port($server);
-				$this->link = @sqlsrv_connect($host . ($port ? ",$port" : ""), $connection_info);
+				$port = $server["port"];
+				$this->link = @sqlsrv_connect($server["host"] . ($port ? ",$port" : ""), $connection_info);
 				if ($this->link) {
 					$info = sqlsrv_server_info($this->link);
 					$this->server_info = $info['SQLServerVersion'];
@@ -214,9 +214,9 @@ if (isset($_GET["mssql"])) {
 			class Db extends MssqlDb {
 				public $extension = "PDO_SQLSRV";
 
-				function attach(string $server, string $username, string $password): string {
-					list($host, $port) = host_port($server);
-					$dsn = "sqlsrv:Server=$host" . ($port ? ",$port" : "");
+				function attach(array $server, string $username, string $password): string {
+					$port = $server["port"];
+					$dsn = "sqlsrv:Server=$server[host]" . ($port ? ",$port" : "");
 					$ssl = adminer()->connectSsl();
 					foreach (array("Encrypt", "TrustServerCertificate") as $key) {
 						if (isset($ssl[$key])) {
@@ -232,9 +232,10 @@ if (isset($_GET["mssql"])) {
 			class Db extends MssqlDb {
 				public $extension = "PDO_DBLIB";
 
-				function attach(string $server, string $username, string $password): string {
-					list($host, $port) = host_port($server);
-					return $this->dsn("dblib:charset=utf8;host=$host" . ($port ? (is_numeric($port) ? ";port=" : ";unix_socket=") . $port : ""), $username, $password);
+				function attach(array $server, string $username, string $password): string {
+					$port = $server["port"];
+					$socket = $server["socket"];
+					return $this->dsn("dblib:charset=utf8;host=$server[host]" . ($port != "" ? ";port=$port" : ($socket != "" ? ";unix_socket=$socket" : "")), $username, $password);
 				}
 			}
 		}
@@ -245,17 +246,24 @@ if (isset($_GET["mssql"])) {
 		static $extensions = array("SQLSRV", "PDO_SQLSRV", "PDO_DBLIB");
 		static $jush = "mssql";
 
+		static $serverSocket = true; // PDO_DBLIB
+
 		public $insertFunctions = array("date|time" => "getdate");
 		public $editFunctions = array(
 			"int|decimal|real|float|money|datetime" => "+/-",
 			"char|text" => "+",
 		);
 
-		public $operators = array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL");
 		public $functions = array("len", "lower", "round", "upper");
 		public $grouping = array("avg", "count", "count distinct", "max", "min", "sum");
 		public $generated = array("PERSISTED", "VIRTUAL");
 		public $onActions = "NO ACTION|CASCADE|SET NULL|SET DEFAULT";
+
+		/** @var list<string> */ private $unknownTypes = array(); // types of the server which Adminer doesn't know, they are offered without a group
+
+		function operators(?array $tableStatus): array {
+			return array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL");
+		}
 
 		static function connect(string $server, string $username, string $password) {
 			if ($server == "") {
@@ -266,12 +274,43 @@ if (isset($_GET["mssql"])) {
 
 		function __construct(Db $connection) {
 			parent::__construct($connection);
-			$this->types = array( //! use sys.types
-				lang('Numbers') => array("tinyint" => 3, "smallint" => 5, "int" => 10, "bigint" => 20, "bit" => 1, "decimal" => 0, "real" => 12, "float" => 53, "smallmoney" => 10, "money" => 20),
-				lang('Date and time') => array("date" => 10, "smalldatetime" => 19, "datetime" => 19, "datetime2" => 19, "time" => 8, "datetimeoffset" => 10),
-				lang('Strings') => array("char" => 8000, "varchar" => 8000, "text" => 2147483647, "nchar" => 4000, "nvarchar" => 4000, "ntext" => 1073741823),
+			$this->types = array(
+				lang('Numbers') => array(
+					"tinyint" => 3, "smallint" => 5, "int" => 10, "bigint" => 20, "bit" => 1, "decimal" => 0, "numeric" => 0,
+					"real" => 12, "float" => 53, "smallmoney" => 10, "money" => 20, "vector" => 0,
+				),
+				lang('Date and time') => array("date" => 10, "smalldatetime" => 19, "datetime" => 19, "datetime2" => 19, "time" => 8, "datetimeoffset" => 26),
+				lang('Strings') => array(
+					"char" => 8000, "varchar" => 8000, "text" => 2147483647, "nchar" => 4000, "nvarchar" => 4000, "ntext" => 1073741823,
+					"uniqueidentifier" => 36, "xml" => 2147483647, "json" => 2147483647, "sql_variant" => 8000, "hierarchyid" => 892,
+				),
 				lang('Binary') => array("binary" => 8000, "varbinary" => 8000, "image" => 2147483647),
+				lang('Geometry') => array("geometry" => 0, "geography" => 0),
 			);
+			$types = array_flip(get_vals("SELECT name FROM sys.types WHERE is_user_defined = 0 ORDER BY name"));
+			if ($types) {
+				foreach ($this->types as $group => $group_types) {
+					foreach ($group_types as $type => $length) {
+						if (isset($types[$type])) {
+							unset($types[$type]);
+						} else {
+							unset($this->types[$group][$type]);
+						}
+					}
+					if (!$this->types[$group]) {
+						unset($this->types[$group]);
+					}
+				}
+				$this->unknownTypes = array_keys($types);
+			}
+		}
+
+		function types(): array {
+			return parent::types() + array_fill_keys($this->unknownTypes, 0);
+		}
+
+		function structuredTypes(): array {
+			return array_merge(parent::structuredTypes(), $this->unknownTypes);
 		}
 
 		function insertUpdate(string $table, array $rows, array $primary) {
@@ -321,7 +360,7 @@ if (isset($_GET["mssql"])) {
 
 		function convertSearch(string $idf, array $val, array $field): string {
 			// these types support no comparison operator, not even LIKE, or accept no text value; the other types are converted implicitly
-			return (preg_match('~^(bit|n?text|xml|uniqueidentifier|sql_variant|hierarchyid|geography|geometry)$~', $field["type"])
+			return (preg_match('~^(bit|n?text|xml|json|vector|uniqueidentifier|sql_variant|hierarchyid|geography|geometry)$~', $field["type"])
 				? "CAST($idf AS nvarchar(max))"
 				: $idf
 			);
@@ -439,12 +478,13 @@ WHERE schema_id = SCHEMA_ID(" . q(get_schema()) . ") AND type IN ('S', 'U', 'V')
 			. ", 'table', " . q($table) . ", 'column', NULL)");
 		$return = array();
 		$table_id = get_val("SELECT object_id FROM sys.all_objects WHERE schema_id = SCHEMA_ID(" . q(get_schema()) . ") AND type IN ('S', 'U', 'V') AND name = " . q($table));
+		// only a user-defined type is replaced by its base type, a system type is stored under the id of another one, e.g. vector under varbinary
 		foreach (
 			get_rows("SELECT c.max_length, c.precision, c.scale, c.name, c.is_nullable, c.is_identity, c.collation_name,
 	COALESCE(bt.name, t.name) type, d.definition [default], d.name default_constraint, i.is_primary_key
 FROM sys.all_columns c
 JOIN sys.types t ON c.user_type_id = t.user_type_id
-LEFT JOIN sys.types bt ON t.system_type_id = bt.user_type_id
+LEFT JOIN sys.types bt ON t.system_type_id = bt.user_type_id AND t.is_user_defined = 1
 LEFT JOIN sys.default_constraints d ON c.default_object_id = d.object_id
 LEFT JOIN sys.index_columns ic ON c.object_id = ic.object_id AND c.column_id = ic.column_id
 LEFT JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id
@@ -453,7 +493,10 @@ WHERE c.object_id = " . q($table_id)) as $row
 			$type = $row["type"];
 			$length = (preg_match("~char|binary~", $type)
 				? intval($row["max_length"]) / ($type[0] == 'n' ? 2 : 1)
-				: ($type == "decimal" ? "$row[precision],$row[scale]" : "")
+				: ($type == "decimal"
+					? "$row[precision],$row[scale]"
+					: ($type == "vector" ? (intval($row["max_length"]) - 8) / 4 : "") // a dimension takes 4 bytes, the header 8
+				)
 			);
 			$return[$row["name"]] = array(
 				"field" => $row["name"],

@@ -44,9 +44,10 @@ function page_header(string $title, string $error = "", $breadcrumb = array(), s
 	}
 	echo "<meta name='color-scheme' content='" . ($dark === null ? "light dark" : ($dark ? "dark" : "light")) . "'>\n";
 
-	// this is matched by compile.php
 	echo script_src(DIR . "static/functions.js");
-	echo script_src("static/editing.js");
+	if (defined('Adminer\DIR')) { // the compiled version merges editing.js into functions.js
+		echo script_src("static/editing.js");
+	}
 	if (adminer()->head($dark)) {
 		echo "<link rel='icon' href='data:image/gif;base64,"
 			. "R0lGODlhEAAQAJEAAAQCBPz+/PwCBAROZCH5BAEAAAAALAAAAAAQABAAAAI2hI+pGO1rmghihiUdvUBnZ3XBQA7f05mOak1RWXrNq5nQWHMKvuoJ37BhVEEfYxQzHjWQ5qIAADs='>\n";
@@ -108,9 +109,7 @@ const shortcutLabels = {
 	echo "<div id='ajaxstatus' role='status' class='jsonly'></div>\n";
 	restart_session();
 	page_messages($error);
-	if (!defined('Adminer\DIR')) { // only the compiled version serves the files itself, the development version leaves them to the web server
-		service_worker();
-	}
+	adminer()->serviceWorker();
 	$databases = &get_session("dbs");
 	if (DB != "" && $databases && !in_array(DB, $databases, true)) {
 		$databases = null;

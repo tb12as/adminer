@@ -62,9 +62,6 @@ function lang_ids($match) {
 function put_file($match) {
 	global $project, $vendor;
 	list(, , $dir, $filename) = $match; // DIR is the Adminer sources, the other paths are relative to the compiled project
-	if (preg_match('~LANG~', $filename)) {
-		return $match[0]; // processed later
-	}
 	$return = file_get_contents(__DIR__ . "/" . ($dir ? "adminer" : $project) . "/$filename");
 	$return = replace_re('~namespace Adminer;\s*~', '', $return);
 	if ($vendor && preg_match('~drivers/~', $filename)) {
@@ -72,7 +69,7 @@ function put_file($match) {
 			$return = replace_re('~^if \(isset\(\$_GET\["' . $vendor . '"]\)\) \{(.*)^}~ms', '\1', $return);
 			// check function definition in drivers
 			preg_match_all(
-				'~\bfunction (?!alter_table|drop_tables|truncate_tables)([^(]+)~', // used for feature detection
+				'~\bfunction (?!alter_table|drop_tables|move_tables|truncate_tables)([^(]+)~', // used for feature detection
 				replace_re('~class Driver.*\n\t}~sU', '', file_get_contents(__DIR__ . "/adminer/drivers/mysql.inc.php")),
 				$matches
 			); //! respect context (extension, class)
@@ -104,6 +101,12 @@ function put_file($match) {
 			unset($functions["__construct"], $functions["__destruct"], $functions["set_charset"], $functions["multi_query"], $functions["store_result"], $functions["next_result"]);
 			unset($functions["inTransaction"]); // SqlDb provides a default implementation, MySQL overrides it only because its Db extends \MySQLi
 			unset($functions["parse_type"], $functions["trigger_event"]); // helpers of the MySQL driver, not a part of the driver interface
+			if (strpos($return, "function slowQuery(")) {
+				unset($functions["connection_id"]); // slow_query() kills the query by its connection ID only if the driver can't limit the execution time itself
+			}
+			if (!strpos($return, "function alter_table(")) {
+				unset($functions["auto_increment"]); // it is used only in the form creating or altering a table
+			}
 			foreach ($functions as $val) {
 				if (!strpos($return, "$val(")) {
 					fprintf(STDERR, "Missing $val in $vendor\n");
@@ -121,44 +124,6 @@ function put_file($match) {
 	}
 	$tokens = token_get_all($return); // to find out the last token
 	return "?>\n$return" . (in_array($tokens[count($tokens) - 1][0], array(T_CLOSE_TAG, T_INLINE_HTML), true) ? "<?php" : "");
-}
-
-function put_file_lang($match) {
-	if ($_SESSION["lang"]) {
-		return "";
-	}
-	$return = "";
-	$dictionary = get_lang_translations("en"); // other languages are compressed against English, it saves 13% of their size
-	foreach (array_keys(Adminer\langs()) as $lang) {
-		$compressed = Adminer\compress_string(get_lang_translations($lang), ($lang != "en" ? $dictionary : ""));
-		$return .= '
-		case "' . $lang . '": return \'' . $compressed . '\';';
-	}
-	$translations_version = crc32($return);
-	return 'Lang::$translations = (array) $_SESSION["translations"];
-if ($_SESSION["translations_version"] != LANG . ' . $translations_version . ') {
-	Lang::$translations = array();
-	$_SESSION["translations_version"] = LANG . ' . $translations_version . ';
-}
-if (!Lang::$translations) {
-	Lang::$translations = get_translations(LANG);
-	$_SESSION["translations"] = Lang::$translations;
-}
-
-function get_compressed($lang) {
-	switch ($lang) {' . $return . '
-	}
-}
-
-function get_translations($lang) {
-	$dictionary = ($lang != "en" ? decompress_string(get_compressed("en")) : "");
-	$translations = array();
-	foreach (explode("\n", decompress_string(get_compressed($lang), $dictionary)) as $val) {
-		$translations[] = (strpos($val, "\t") ? explode("\t", $val) : $val);
-	}
-	return $translations;
-}
-';
 }
 
 /** Get translations of a language indexed by $lang_ids, joined by newlines */
@@ -219,20 +184,21 @@ function ini_bool() {
 	return true;
 }
 
-/** Inline the JUSH module in a driver plugin
+/** Inline the JUSH module in a driver plugin and strip the type declarations unsupported by PHP 5
 * @return string contents of the released driver
 */
 function build_driver($filename) {
 	$file = file_get_contents($filename);
 	preg_match('~static \$jush = "([^"]+)"~', $file, $match);
 	$module_file = __DIR__ . "/adminer/static/jush/modules/jush-$match[1].js";
-	if (!file_exists($module_file)) {
-		return $file; // the driver has no highlighter
+	if (file_exists($module_file)) { // the other drivers have no highlighter
+		$module = file_get_contents($module_file);
+		$file = replace_re('~(static function jushModule\(\): string \{\s*return )"";[^\n]*~', function ($match) use ($module) {
+			return $match[1] . "<<<'JS'\n" . rtrim($module, "\n") . "\nJS;";
+		}, $file, 1);
 	}
-	$module = file_get_contents($module_file);
-	return replace_re('~(static function jushModule\(\): string \{\s*return )"";[^\n]*~', function ($match) use ($module) {
-		return $match[1] . "<<<'JS'\n" . rtrim($module, "\n") . "\nJS;";
-	}, $file, 1);
+	// the driver is loaded by the compiled Adminer which has the types stripped, a subclass can't declare a stripped parameter type
+	return (function_exists('stripTypes') ? stripTypes($file) : $file);
 }
 
 if ($_SERVER["argv"][1] == "drivers") {
@@ -290,7 +256,8 @@ $file = replace_re('~\*/~', "* @version " . Adminer\VERSION . "\n*/", $file, 1);
 if ($vendor) {
 	$_GET[$vendor] = true; // to load the driver
 	include_once __DIR__ . $driver_path;
-	Adminer\Db::$instance = (object) array('flavor' => '', 'server_info' => '99'); // used in support()
+	$db_class = (class_exists('Adminer\Db') ? 'Adminer\Db' : 'Adminer\SqlDb'); // Db is not declared if the driver requires an extension missing on this machine
+	$db_class::$instance = (object) array('flavor' => '', 'server_info' => '99'); // used in support()
 	foreach ($features as $key => $feature) {
 		if (!Adminer\support($feature)) {
 			if (!is_int($key)) {
@@ -320,6 +287,16 @@ if ($vendor) {
 }
 $file = replace_re('~\b(include|require) (DIR \. )?"([^"]*)";~', 'put_file', $file); // bootstrap.inc.php
 $file = replace_re('~(if \(!defined\(\'Adminer\\\\DIR\'\)\) \{.*\n\t)?define\(\'Adminer\\\\DIR\'.*\n(\}\n)?~', '', $file); // the compiled file serves the static files itself
+
+// the code used only in one of the versions is marked by a condition which is resolved here
+$dedent = function ($match) {
+	return preg_replace('~^\t~m', '', "$match[2]"); // the other replacements match the indentation of the source
+};
+$file = replace_re('~^(\t*)if \(!defined\(\'Adminer\\\\DIR\'\)\) \{[^\n]*\n(.*\n)\1\}\n~msU', $dedent, $file);
+$file = replace_re('~^(\t*)if \(defined\(\'Adminer\\\\DIR\'\)\) \{[^\n]*\n.*\n\1\}(?: else \{[^\n]*\n(.*\n)\1\})?\n~msU', $dedent, $file);
+if (strpos($file, "Adminer\\DIR") !== false) {
+	not_found("Adminer\\DIR"); // the condition must not survive compilation
+}
 
 // inline the checksums of official plugins, the plugins/ directory is not available next to the compiled file
 $checksums = "";
@@ -375,19 +352,20 @@ if ($project == "editor") {
 }
 // \s* after ( allows wrapping long lang() calls
 $file = replace_re("~(?<!>)lang\\(\\s*'((?:[^\\\\']+|\\\\.)*)'([,)])~s", 'lang_ids', $file);
-$file = replace_re('~\b(include|require) DIR \. "[^"]*" \. LANG \. "\.inc\.php";~', 'put_file_lang', $file);
 $file = str_replace("\r", "", $file);
-if ($_SESSION["lang"]) {
-	// single language version
+if ($_SESSION["lang"]) { // single language version
 	$file = replace_re("~(<\\?php\\s*echo )?(?<!>)lang\\(\\s*'((?:[^\\\\']+|\\\\.)*)'([,)])(;\\s*\\?>)?~s", 'remove_lang', $file);
 	$file = replace("switch_lang();", "", $file);
 	$file = replace('<?php echo LANG; ?>', $_SESSION["lang"], $file);
-}
-$file = replace('echo script_src("static/editing.js");' . "\n", "", $file); // merged into functions.js
-if ($project != "editor") { // the Editor doesn't use jush
-	$file = replace_re('~\s+echo script_src\(DIR \. "static/jush/modules/jush-(autocomplete-sql|textarea|txt|json)\.js", true\);~', '', $file); // merged into jush.js
-	$file = replace_re('~\s+echo \(file_exists\(__DIR__.+jush-" \. JUSH \. "\.js", true\) : ""\);~', '', $file); // merged into jush.js or inlined in the driver
-	$file = replace_re('~echo .*/jush(-dark)?.css\'>.*~', '', $file); // merged into default.css or dark.css
+} else { // multi-language version
+	$cases = "";
+	$dictionary = get_lang_translations("en"); // other languages are compressed against English, it saves 13% of their size
+	foreach (array_keys(Adminer\langs()) as $lang) {
+		$cases .= "\n\t\tcase \"$lang\": return '" . Adminer\compress_string(get_lang_translations($lang), ($lang != "en" ? $dictionary : "")) . "';";
+	}
+	$file = replace_re('~(function get_compressed\(string \$lang\): string \{\n).*(\n})~sU', function ($match) use ($cases) {
+		return $match[1] . "\tswitch (\$lang) {" . $cases . "\n\t}\n\treturn \"\";" . $match[2];
+	}, $file, 1);
 }
 if (function_exists('stripTypes')) {
 	$file = stripTypes($file);

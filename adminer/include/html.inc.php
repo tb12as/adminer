@@ -280,7 +280,13 @@ function enum_input(string $type, string $attrs, array $field, $value, string $e
 function input(array $field, $value, ?string $function, ?bool $autofocus = false, ?bool $update = false): void {
 	$name = h(bracket_escape($field["field"]));
 	echo "<td class='function'>";
-	if (is_array($value) && !$function) {
+	$enums = driver()->enumLength($field);
+	if ($enums) {
+		$field["type"] = "enum";
+		$field["length"] = $enums;
+	}
+	$options = ($field["type"] == "enum" || $field["type"] == "set"); // the value is an array of the selected options
+	if (is_array($value) && !$function && !$options) {
 		$function = "json";
 	}
 	$json = ($function == "json" || preg_match('~^jsonb?$~', $field["full_type"]));
@@ -295,12 +301,7 @@ function input(array $field, $value, ?string $function, ?bool $autofocus = false
 	}
 	// the form from Select can affect more rows so it must be possible to keep the original value of each of them
 	$functions = (isset($_GET["select"]) || $reset ? array("orig" => lang('original')) : array()) + adminer()->editFunctions($field);
-	$enums = driver()->enumLength($field);
-	if ($enums) {
-		$field["type"] = "enum";
-		$field["length"] = $enums;
-	}
-	$attrs = " name='fields[$name]" . ($field["type"] == "enum" || $field["type"] == "set" ? "[]" : "") . "'" . ($autofocus ? " autofocus" : "");
+	$attrs = " name='fields[$name]" . ($options ? "[]" : "") . "'" . ($autofocus ? " autofocus" : "");
 	echo driver()->unconvertFunction($field) . " ";
 	$table = $_GET["edit"] ?: $_GET["select"]; // $_GET["edit"] is not set when re-printing the form after a failed save from Select
 	if ($field["type"] == "enum") {
@@ -341,14 +342,16 @@ function input(array $field, $value, ?string $function, ?bool $autofocus = false
 			}
 			echo "<textarea$attrs>" . h($value) . '</textarea>';
 		} else {
-			// int(3) is only a display hint
 			$types = driver()->types();
-			$maxlength = (!preg_match('~int~', $field["type"]) && preg_match('~^(\d+)(,(\d+))?$~', $field["length"], $match)
-				? ((preg_match("~binary~", $field["type"]) ? 2 : 1) * $match[1] + ($match[3] ? 1 : 0) + ($match[2] && !$field["unsigned"] ? 1 : 0))
-				: ($types[$field["type"]] ? $types[$field["type"]] + ($field["unsigned"] ? 0 : 1) : 0)
-			);
-			if (JUSH == 'sql' && min_version(5.6) && preg_match('~time~', $field["type"])) {
-				$maxlength += 7; // microtime
+			$type_length = $types[$field["type"]];
+			if (preg_match('~date|time|year~', $field["type"])) {
+				// the length of a temporal type is the number of fractional seconds digits, not of characters
+				$fraction = (preg_match('~time~', $field["type"]) && preg_match('~^\d+$~', $field["length"]) ? $field["length"] + 1 : 0); // 1 - decimal point
+				$maxlength = ($type_length ? $type_length + $fraction : 0);
+			} elseif (!preg_match('~int|vector~', $field["type"]) && preg_match('~^(\d+)(,(\d+))?$~', $field["length"], $match)) { // int(3) and vector(3) don't limit the length of the value
+				$maxlength = (preg_match("~binary~", $field["type"]) ? 2 : 1) * $match[1] + ($match[3] ? 1 : 0) + ($match[2] && !$field["unsigned"] ? 1 : 0);
+			} else {
+				$maxlength = ($type_length ? $type_length + ($field["unsigned"] ? 0 : 1) : 0); // 1 - minus sign
 			}
 			// type='date' and type='time' display localized value which may be confusing, type='datetime' uses 'T' as date and time separator
 			echo "<input"
@@ -423,7 +426,7 @@ function search_tables(): void {
 	foreach (table_status('', true) as $table => $table_status) {
 		$name = adminer()->tableName($table_status);
 		if (isset($table_status["Engine"]) && $name != "" && (!$_POST["tables"] || in_array($table, $_POST["tables"]))) {
-			$result = connection()->query("SELECT" . limit("1 FROM " . table($table), " WHERE " . implode(" AND ", adminer()->selectSearchProcess(fields($table), array())), 1));
+			$result = connection()->query("SELECT" . limit("1 FROM " . table($table), " WHERE " . implode(" AND ", adminer()->selectSearchProcess(fields($table), array(), $table_status)), 1));
 			if (!$result || $result->fetch_row()) {
 				$print = "<a href='" . h(ME . "select=" . url_escape($table)
 					. "&where[0][op]=" . url_escape($_GET["where"][0]["op"])
@@ -500,7 +503,7 @@ function edit_form(string $table, array $fields, $row, ?bool $update, string $er
 			}
 			// $row is null in Insert and in the form from Select if it affects other than exactly one row, false then keeps the original value of each of them
 			$value = ($row !== null
-				? ($row[$name] != "" && JUSH == "sql" && preg_match("~enum|set~", $field["type"]) && is_array($row[$name])
+				? ($field["type"] == "set" && is_array($row[$name]) // enum keeps the array, its values are prefixed by "val-"
 					? implode(",", $row[$name])
 					: (is_bool($row[$name]) ? +$row[$name] : $row[$name])
 				)
@@ -587,7 +590,10 @@ function shorten_utf8(string $string, int $length = 80, string $suffix = ""): st
 	if (!preg_match("(^(" . repeat_pattern("[\t\r\n -\x{10FFFF}]", $length) . ")($)?)u", $string, $match)) { // ~s causes trash in $match[2] under some PHP versions, (.|\n) is slow
 		preg_match("(^(" . repeat_pattern("[\t\r\n -~]", $length) . ")($)?)", $string, $match);
 	}
-	return h($match[1]) . $suffix . (isset($match[2]) ? "" : "<i>…</i>");
+	return (isset($match[2])
+		? h($match[1]) . $suffix // the whole string fits
+		: h(preg_replace('~\n[^\n]*\z~', "\n", $match[1])) . "$suffix<i>…</i>" // in a multi-line text, the ellipsis stands for the whole last line
+	);
 }
 
 /** Get button with icon */

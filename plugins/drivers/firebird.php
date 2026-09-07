@@ -14,27 +14,26 @@ if (isset($_GET["firebird"])) {
 		class Db extends SqlDb {
 			public $extension = "Firebird", $_link;
 
-			function attach($server, $username, $password): string {
-				$this->_link = ibase_connect($server, $username, $password);
+			function attach(array $server, string $username, string $password): string {
+				$host = $server["host"] . ($server["port"] != "" ? "/" . $server["port"] : "");
+				$this->_link = ibase_connect($host . ($server["path"] != "" ? ":" . $server["path"] : ""), $username, $password); // the ibase connection string is 'host/port:/path/to/your.gdb'
 				if ($this->_link) {
-					// ibase connection string is 'host/port:/path/to/your.gdb'
-					$url_parts = explode(':', $server);
-					$service_link = ibase_service_attach($url_parts[0], $username, $password);
+					$service_link = ibase_service_attach($host, $username, $password);
 					$this->server_info = ibase_server_info($service_link, IBASE_SVC_SERVER_VERSION);
 					return '';
 				}
 				return ibase_errmsg();
 			}
 
-			function quote($string): string {
+			function quote(string $string): string {
 				return "'" . str_replace("'", "''", $string) . "'";
 			}
 
-			function select_db($database) {
+			function select_db(string $database): bool {
 				return ($database == "domain");
 			}
 
-			function query($query, $unbuffered = false) {
+			function query(string $query, bool $unbuffered = false) {
 				$result = ibase_query($this->_link, $query);
 				if (!$result) {
 					$this->errno = ibase_errcode();
@@ -85,48 +84,62 @@ if (isset($_GET["firebird"])) {
 		static $extensions = array("interbase");
 		static $jush = "firebird";
 
-		public $operators = array("=");
+		static $serverPath = true; // the path to the database file
+
+		function operators(?array $tableStatus): array {
+			return array("=");
+		}
 
 		/** Get the JUSH module inlined in the released driver by the release script */
 		static function jushModule(): string {
 			return ""; // the repository and the source archive load adminer/static/jush/modules/jush-firebird.js
 		}
+
+		function allFields(): array {
+			$return = array();
+			foreach (tables_list() as $table => $type) {
+				foreach (fields($table) as $field) {
+					$return[$table][] = $field;
+				}
+			}
+			return $return;
+		}
 	}
 
 
 
-	function idf_escape($idf) {
+	function idf_escape(string $idf): string {
 		return '"' . str_replace('"', '""', $idf) . '"';
 	}
 
-	function table($idf) {
+	function table(string $idf): string {
 		return idf_escape($idf);
 	}
 
-	function get_databases($flush) {
+	function get_databases(bool $flush): array {
 		return array("domain");
 	}
 
-	function limit($query, $where, $limit, $offset = 0, $separator = " ") {
+	function limit(string $query, string $where, int $limit, int $offset = 0, string $separator = " "): string {
 		$return = '';
 		$return .= ($limit ? $separator . "FIRST $limit" . ($offset ? " SKIP $offset" : "") : "");
 		$return .= " $query$where";
 		return $return;
 	}
 
-	function limit1($table, $query, $where, $separator = "\n") {
+	function limit1(string $table, string $query, string $where, string $separator = "\n"): string {
 		return limit($query, $where, 1, 0, $separator);
 	}
 
-	function db_collation($db, $collations) {
+	function db_collation(string $db, array $collations) {
 	}
 
-	function logged_user() {
+	function logged_user(): string {
 		$credentials = adminer()->credentials();
 		return $credentials[1];
 	}
 
-	function tables_list() {
+	function tables_list(): array {
 		$query = 'SELECT RDB$RELATION_NAME FROM rdb$relations WHERE rdb$system_flag = 0';
 		$result = ibase_query(connection()->_link, $query);
 		$return = array();
@@ -137,11 +150,11 @@ if (isset($_GET["firebird"])) {
 		return $return;
 	}
 
-	function count_tables($databases) {
+	function count_tables(array $databases): array {
 		return array();
 	}
 
-	function table_status($name = "", $fast = false) {
+	function table_status(string $name = "", bool $fast = false): array {
 		$return = array();
 		$data = ($name != "" ? array($name => 1) : tables_list());
 		foreach ($data as $index => $val) {
@@ -154,15 +167,15 @@ if (isset($_GET["firebird"])) {
 		return $return;
 	}
 
-	function is_view($table_status) {
+	function is_view(array $table_status): bool {
 		return false;
 	}
 
-	function fk_support($table_status) {
+	function fk_support(array $table_status): bool {
 		return preg_match('~InnoDB|IBMDB2I~i', $table_status["Engine"]);
 	}
 
-	function fields($table) {
+	function fields(string $table): array {
 		$return = array();
 		$query = 'SELECT r.RDB$FIELD_NAME AS field_name,
 r.RDB$DESCRIPTION AS field_description,
@@ -214,7 +227,7 @@ ORDER BY r.RDB$FIELD_POSITION';
 		return $return;
 	}
 
-	function indexes($table, $connection2 = null) {
+	function indexes(string $table, ?Db $connection2 = null): array {
 		$return = array();
 		/*
 		$query = 'SELECT RDB$INDEX_SEGMENTS.RDB$FIELD_NAME AS field_name,
@@ -231,34 +244,43 @@ ORDER BY RDB$INDEX_SEGMENTS.RDB$FIELD_POSITION';
 		return $return;
 	}
 
-	function foreign_keys($table) {
+	function foreign_keys(string $table): array {
 		return array();
 	}
 
-	function collations() {
+	function collations(): array {
 		return array();
 	}
 
-	function information_schema($db) {
+	function information_schema(string $db): bool {
 		return false;
 	}
 
-	function error() {
+	function error(): string {
 		return h(connection()->error);
+	}
+
+	function last_id($result) {
+	}
+
+	function explain(Db $connection, string $query) {
+	}
+
+	function found_rows(array $table_status, array $where) {
 	}
 
 	function types(): array {
 		return array();
 	}
 
-	function convert_field($field) {
+	function convert_field(array $field) {
 	}
 
-	function unconvert_field($field, $return) {
+	function unconvert_field(array $field, string $return): string {
 		return $return;
 	}
 
-	function support($feature) {
-		return preg_match("~^(columns|sql|status|table)$~", $feature);
+	function support(string $feature): bool {
+		return preg_match("~^(columns|sql|table)$~", $feature);
 	}
 }

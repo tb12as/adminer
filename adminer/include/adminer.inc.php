@@ -65,10 +65,11 @@ class Adminer {
 	}
 
 	/** Operators used in select
+	* @param ?TableStatus $tableStatus null in the search through all tables
 	* @return list<string> operators
 	*/
-	function operators(): array {
-		return driver()->operators;
+	function operators(?array $tableStatus = null): array {
+		return driver()->operators($tableStatus);
 	}
 
 	/** Get list of schemas
@@ -110,14 +111,22 @@ class Adminer {
 		return true;
 	}
 
+	/** Print the script maintaining the service worker */
+	function serviceWorker(): void {
+		if (!defined('Adminer\DIR')) { // only the compiled version serves the files itself, the development version leaves them to the web server
+			service_worker();
+		}
+	}
+
 	/** Print HTML code inside <head>
 	* @param bool $dark dark CSS: false to disable, true to force, null to base on user preferences
 	* @return bool true to link favicon.ico
 	*/
 	function head(?bool $dark = null): bool {
-		// this is matched by compile.php
-		echo "<link rel='stylesheet' href='" . DIR . "static/jush/jush.css'>\n";
-		echo ($dark !== false ? "<link rel='stylesheet'" . ($dark ? "" : " media='(prefers-color-scheme: dark)'") . " href='" . DIR . "static/jush/jush-dark.css'>\n" : "");
+		if (defined('Adminer\DIR')) { // the compiled version merges jush.css into default.css and jush-dark.css into dark.css
+			echo "<link rel='stylesheet' href='" . DIR . "static/jush/jush.css'>\n";
+			echo ($dark !== false ? "<link rel='stylesheet'" . ($dark ? "" : " media='(prefers-color-scheme: dark)'") . " href='" . DIR . "static/jush/jush-dark.css'>\n" : "");
+		}
 		return true;
 	}
 
@@ -498,18 +507,19 @@ class Adminer {
 	* @param list<string> $where result of selectSearchProcess()
 	* @param string[] $columns selectable columns
 	* @param Index[] $indexes
+	* @param ?TableStatus $tableStatus
 	*/
-	function selectSearchPrint(array $where, array $columns, array $indexes): void {
+	function selectSearchPrint(array $where, array $columns, array $indexes, ?array $tableStatus = null): void {
 		print_fieldset("search", lang('Search'), $where);
 		foreach ($indexes as $i => $index) {
 			if ($index["type"] == "FULLTEXT") {
-				echo "<div>(<i>" . implode("</i>, <i>", array_map('Adminer\h', $index["columns"])) . "</i>) AGAINST";
+				echo "<div>(<i>" . implode("</i>, <i>", array_map('Adminer\h', $index["columns"])) . "</i>) " . h(driver()->fulltextOperator);
 				echo " <input type='search' name='fulltext[$i]' value='" . h(idx($_GET["fulltext"], $i)) . "' data-default=''" . on('input', 'selectFieldChange') . ">";
 				echo (JUSH == 'sql' ? checkbox("boolean[$i]", 1, isset($_GET["boolean"][$i]), "BOOL") : '');
 				echo "</div>\n";
 			}
 		}
-		$operators = adminer()->operators();
+		$operators = adminer()->operators($tableStatus);
 		foreach (array_merge((array) $_GET["where"], array(array())) as $i => $val) {
 			if (!$val || ("$val[col]$val[val]" != "" && in_array($val["op"], $operators))) {
 				echo "<div>" . select_input(
@@ -636,17 +646,17 @@ class Adminer {
 	/** Process search box in select
 	* @param Field[] $fields
 	* @param Index[] $indexes
+	* @param ?TableStatus $tableStatus
 	* @return list<string> expressions to join by AND
 	*/
-	function selectSearchProcess(array $fields, array $indexes): array {
+	function selectSearchProcess(array $fields, array $indexes, ?array $tableStatus = null): array {
 		$return = array();
 		foreach ($indexes as $i => $index) {
 			if ($index["type"] == "FULLTEXT" && idx($_GET["fulltext"], $i) != "") {
-				$return[] = "MATCH (" . implode(", ", array_map('Adminer\idf_escape', $index["columns"])) . ") AGAINST ("
-					. q($_GET["fulltext"][$i]) . (isset($_GET["boolean"][$i]) ? " IN BOOLEAN MODE" : "") . ")";
+				$return[] = driver()->fulltextSql($i, $index, $_GET["fulltext"][$i], isset($_GET["boolean"][$i]));
 			}
 		}
-		$operators = adminer()->operators();
+		$operators = adminer()->operators($tableStatus);
 		foreach ((array) $_GET["where"] as $key => $val) {
 			// the form doesn't send the fields holding the default value, the first operator is preselected by the browser
 			$val += array("col" => "", "op" => first($operators), "val" => "");
@@ -1176,14 +1186,15 @@ class Adminer {
 	* @param TableStatus[] $tables
 	*/
 	function syntaxHighlighting(array $tables): void {
-		// this is matched by compile.php
 		echo script_src(DIR . "static/jush/modules/jush.js", true);
-		echo script_src(DIR . "static/jush/modules/jush-autocomplete-sql.js", true);
-		echo script_src(DIR . "static/jush/modules/jush-textarea.js", true);
-		echo script_src(DIR . "static/jush/modules/jush-txt.js", true);
-		echo script_src(DIR . "static/jush/modules/jush-json.js", true);
-		// this is matched by compile.php - the modules of the bundled drivers are merged into jush.js, some drivers have no module
-		echo (file_exists(__DIR__ . "/../static/jush/modules/jush-" . JUSH . ".js") ? script_src(DIR . "static/jush/modules/jush-" . JUSH . ".js", true) : "");
+		if (defined('Adminer\DIR')) { // the compiled version merges the other modules into jush.js
+			echo script_src(DIR . "static/jush/modules/jush-autocomplete-sql.js", true);
+			echo script_src(DIR . "static/jush/modules/jush-textarea.js", true);
+			echo script_src(DIR . "static/jush/modules/jush-txt.js", true);
+			echo script_src(DIR . "static/jush/modules/jush-json.js", true);
+			// the module of the bundled driver is merged into jush.js too, some drivers have no module
+			echo (file_exists(__DIR__ . "/../static/jush/modules/jush-" . JUSH . ".js") ? script_src(DIR . "static/jush/modules/jush-" . JUSH . ".js", true) : "");
+		}
 		$module = preg_replace('~<(?=/script)~i', '<\\', Driver::jushModule()); // it would close the inline <script>
 		// a released driver plugin carries its module inline; unlike jush.js the inline script is not deferred so it has to wait for it
 		echo ($module ? script("addEventListener('DOMContentLoaded', () => {\n$module\n});") : "");
@@ -1219,7 +1230,7 @@ class Adminer {
 			}
 			echo "</script>\n";
 		}
-		echo script("syntaxHighlighting('" . (preg_match('~^\d\.?\d~', connection()->server_info, $match) ? $match[0] : "") . "', '" . connection()->flavor . "');");
+		echo script("syntaxHighlighting('" . doc_version() . "', '" . connection()->flavor . "');");
 	}
 
 	/** Print databases list in menu */
@@ -1272,7 +1283,7 @@ class Adminer {
 		foreach ($tables as $table => $status) {
 			$table = "$table"; // do not highlight "0" as active everywhere
 			$name = adminer()->tableName($status);
-			if ($name != "" && !$status["partition"]) {
+			if ($name != "" && !$status["dependent"]) {
 				echo '<li><a href="' . h(ME) . 'select=' . url_escape($table) . '"'
 					. bold($_GET["select"] == $table || $_GET["edit"] == $table, "select hover")
 					. " title='" . lang('Select data') . "'>" . lang('select') . "</a> "

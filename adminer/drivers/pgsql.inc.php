@@ -21,10 +21,11 @@ if (isset($_GET["pgsql"])) {
 				$this->error = $error;
 			}
 
-			function attach(string $server, string $username, string $password): string {
+			function attach(array $server, string $username, string $password): string {
 				$db = adminer()->database();
 				set_error_handler(array($this, '_error'));
-				list($host, $port) = host_port($server);
+				$port = $server["port"];
+				$host = ($server["host"] ?: $server["socket"]); // the socket is passed as the host directory
 				$this->string = "host='$host'" . ($port ? " port=$port" : "") . " user='" . addcslashes($username, "'\\") . "' password='" . addcslashes($password, "'\\") . "'";
 				$ssl = adminer()->connectSsl();
 				if (isset($ssl["mode"])) {
@@ -164,9 +165,10 @@ if (isset($_GET["pgsql"])) {
 			public $extension = "PDO_PgSQL";
 			public $timeout = 0;
 
-			function attach(string $server, string $username, string $password): string {
+			function attach(array $server, string $username, string $password): string {
 				$db = adminer()->database();
-				list($host, $port) = host_port($server);
+				$port = $server["port"];
+				$host = ($server["host"] ?: $server["socket"]); // the socket is passed as the host directory
 				//! client_encoding is supported since 9.1, but we can't yet use min_version here
 				$dsn = "pgsql:host='$host'" . ($port ? " port=$port" : "") . " client_encoding=utf8 dbname='" . ($db != "" ? addcslashes($db, "'\\") : "postgres") . "'";
 				$ssl = adminer()->connectSsl();
@@ -253,13 +255,17 @@ if (isset($_GET["pgsql"])) {
 		static $extensions = array("PgSQL", "PDO_PgSQL");
 		static $jush = "pgsql";
 
-		//! SQL - same-site CSRF
-		public $operators = array("=", "<", ">", "<=", ">=", "!=", "~", "~*", "!~", "LIKE", "LIKE %%", "ILIKE", "ILIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT ILIKE", "NOT IN", "IS NOT NULL", "SQL");
+		static $serverSocket = true; // the socket directory is used as the host
+
 		public $functions = array("char_length", "lower", "round", "to_hex", "to_timestamp", "upper");
 		public $grouping = array("avg", "count", "count distinct", "max", "min", "sum");
 
 		public string $nsOid = "(SELECT oid FROM pg_namespace WHERE nspname = current_schema())";
 		/** @var int[] */ private array $userTypes = array(); // [$name => $oid]
+
+		function operators(?array $tableStatus): array {
+			return array("=", "<", ">", "<=", ">=", "!=", "~", "~*", "!~", "LIKE", "LIKE %%", "ILIKE", "ILIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT ILIKE", "NOT IN", "IS NOT NULL", "SQL");
+		}
 
 		static function connect(string $server, string $username, string $password) {
 			$connection = parent::connect($server, $username, $password);
@@ -436,6 +442,26 @@ if (isset($_GET["pgsql"])) {
 			return "(SELECT oid FROM pg_class WHERE relnamespace = $this->nsOid AND relname = " . q($table) . " AND relkind IN ('r', 'm', 'v', 'f', 'p'))";
 		}
 
+		function allFields(): array {
+			// information_schema is slow here, it reads the constraints of the whole database and checks the privileges of every row
+			$return = array();
+			$rows = get_rows("SELECT c.relname AS tab, a.attname AS field, a.attnotnull::int,
+	format_type(a.atttypid, a.atttypmod) AS full_type, i.indrelid AS primary
+FROM pg_class c
+JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY(i.indkey)
+WHERE c.relnamespace = $this->nsOid
+AND c.relkind IN ('r', 'm', 'v', 'f', 'p')" . (min_version(10) ? "
+AND NOT c.relispartition" : "") . "
+ORDER BY c.relname, a.attnum", $this->conn);
+			foreach ($rows as $row) {
+				parse_full_type($row);
+				$row["null"] = !$row["attnotnull"];
+				$return[$row["tab"]][] = $row;
+			}
+			return $return;
+		}
+
 		function indexAlgorithms(array $tableStatus): array {
 			static $return = array();
 			if (!$return) {
@@ -490,7 +516,7 @@ ORDER BY datname");
 	function limit1(string $table, string $query, string $where, string $separator = "\n"): string {
 		return (preg_match('~^INTO~', $query)
 			? limit($query, $where, 1, 0, $separator)
-			: " $query" . (is_view(table_status1($table)) ? $where : $separator . "WHERE ctid = (SELECT ctid FROM " . table($table) . $where . $separator . "LIMIT 1)")
+			: " $query" . (is_view(table_status1($table)) ? $where : $separator . "WHERE (tableoid, ctid) = (SELECT tableoid, ctid FROM " . table($table) . $where . $separator . "LIMIT 1)")
 		);
 	}
 
@@ -544,7 +570,7 @@ ORDER BY 1";
 	" . (min_version(12) ? "''" : "CASE WHEN relhasoids THEN 'oid' ELSE '' END") . " AS \"Oid\",
 	reltuples AS \"Rows\",
 	" . ($sequences ? "seq.last_value" : "NULL") . " AS \"Auto_increment\",
-	" . (min_version(10) ? "relispartition::int AS partition," : "") . "
+	" . (min_version(10) ? "relispartition::int AS dependent," : "") . "
 	current_schema() AS nspname
 FROM pg_class c
 " . ($sequences ? "LEFT JOIN (
@@ -573,14 +599,31 @@ AND relnamespace = " . driver()->nsOid . "
 		return true;
 	}
 
-	function fields(string $table): array {
-		$return = array();
-		$aliases = array(
+	/** Compute 'type' and 'length' from 'full_type' returned by format_type() and normalize 'full_type'
+	* @param mixed[] $row modified in place
+	*/
+	function parse_full_type(array &$row): void {
+		static $aliases = array(
 			'timestamp without time zone' => 'timestamp',
 			'timestamp with time zone' => 'timestamptz',
 			'time without time zone' => 'time',
 			'time with time zone' => 'timetz',
 		);
+		preg_match('~([^([]+)(\((.*)\))?([a-z ]+)?((\[[0-9]*])*)$~', $row["full_type"], $match);
+		list(, $type, $length, $row["length"], $addon, $array) = $match;
+		$row["length"] .= $array;
+		$check_type = $type . $addon;
+		if (isset($aliases[$check_type])) {
+			$row["type"] = $aliases[$check_type];
+			$row["full_type"] = $row["type"] . $length . $array;
+		} else {
+			$row["type"] = $type;
+			$row["full_type"] = $row["type"] . $length . $addon . $array;
+		}
+	}
+
+	function fields(string $table): array {
+		$return = array();
 		foreach (
 			get_rows("SELECT
 	a.attname AS field,
@@ -602,17 +645,7 @@ AND a.attnum > 0
 ORDER BY a.attnum") as $row
 		) {
 			//! collation
-			preg_match('~([^([]+)(\((.*)\))?([a-z ]+)?((\[[0-9]*])*)$~', $row["full_type"], $match);
-			list(, $type, $length, $row["length"], $addon, $array) = $match;
-			$row["length"] .= $array;
-			$check_type = $type . $addon;
-			if (isset($aliases[$check_type])) {
-				$row["type"] = $aliases[$check_type];
-				$row["full_type"] = $row["type"] . $length . $array;
-			} else {
-				$row["type"] = $type;
-				$row["full_type"] = $row["type"] . $length . $addon . $array;
-			}
+			parse_full_type($row);
 			if (in_array($row['attidentity'], array('a', 'd'))) {
 				$row['default'] = 'GENERATED ' . ($row['attidentity'] == 'd' ? 'BY DEFAULT' : 'ALWAYS') . ' AS IDENTITY';
 			}

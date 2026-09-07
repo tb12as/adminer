@@ -18,13 +18,18 @@ abstract class SqlDriver {
 	/** @var string */ static $jush; // JUSH identifier
 	/** @var bool */ static $passwords = true; // false in databases without passwords, they can be protected only by a plugin
 
+	/** @var list<string> */ static $serverSchemes = array(); // URL schemes allowed in the server name
+	/** @var bool */ static $serverSocket = false; // the server name can specify a socket
+	/** @var bool */ static $serverPath = false; // the server name can contain a path
+	/** @var bool */ static $serverFile = false; // the server name is a path to a file, not an address
+
 	/** @var Db */ protected $conn;
 	/** @var int[][] */ protected $types = array(); // [$group => [$type => $maximum_unsigned_length, ...], ...]
 	/** @var string */ public $delimiter = ";"; // string separating queries, it is used also as a regular expression
 	/** @var string[] */ public $insertFunctions = array(); // ["$type|$type2" => "$function/$function2"] functions used in edit and insert
 	/** @var string[] */ public $editFunctions = array(); // ["$type|$type2" => "$function/$function2"] functions used in edit only
 	/** @var list<string> */ public $unsigned = array(); // number variants
-	/** @var list<string> */ public $operators = array(); // operators used in select
+	/** @var string */ public $fulltextOperator = "AGAINST"; // printed in the fulltext search box
 	/** @var list<string> */ public $functions = array(); // functions used in select
 	/** @var list<string> */ public $grouping = array(); // grouping functions used in select
 	/** @var string */ public $onActions = "RESTRICT|NO ACTION|CASCADE|SET NULL|SET DEFAULT"; // used in foreign_keys()
@@ -47,7 +52,12 @@ abstract class SqlDriver {
 	* @param list<string>|null $statements statements offered at the beginning of a query, null for all
 	*/
 	static function jushAutocomplete(array $tables, ?array $statements): string {
-		$tablesColumns = array_fill_keys(array_keys($tables), array());
+		$tablesColumns = array();
+		foreach ($tables as $table => $status) {
+			if (!$status["dependent"]) {
+				$tablesColumns[$table] = array();
+			}
+		}
 		foreach (driver()->allFields() as $table => $fields) {
 			foreach ($fields as $field) {
 				$tablesColumns[$table][] = $field["field"];
@@ -60,15 +70,25 @@ abstract class SqlDriver {
 	* @return Db|string string for error
 	*/
 	static function connect(string $server, string $username, string $password) {
-		list($host, $port) = host_port($server);
-		if (preg_match('~[^-\w.:/]~', $host . $port)) {
-			return lang('Invalid server.');
-		}
-		if (preg_match('~^-?\d+~', $port, $match) && ($match[0] < 1024 || $match[0] > 65535)) { // is_numeric('80.') would still connect to port 80
-			return lang('Connecting to privileged ports is not allowed.');
+		if (static::$serverFile) {
+			$parts = server_parts(array("path" => $server)); // the driver verifies the file itself
+		} else {
+			$parts = parse_server($server);
+			if (
+				!$parts
+				|| ($parts["scheme"] && !in_array($parts["scheme"], static::$serverSchemes))
+				|| ($parts["socket"] && !static::$serverSocket)
+				|| ($parts["path"] && !static::$serverPath)
+				|| (substr($parts["host"], 0, 1) == "/" && !static::$serverSocket) // socket directory
+			) {
+				return lang('Invalid server.');
+			}
+			if ($parts["port"] != "" && ($parts["port"] < 1024 || $parts["port"] > 65535)) {
+				return lang('Connecting to privileged ports is not allowed.');
+			}
 		}
 		$connection = new Db;
-		return ($connection->attach($server, $username, $password) ?: $connection);
+		return ($connection->attach($parts, $username, $password) ?: $connection);
 	}
 
 	/** Create object for performing database operations */
@@ -84,7 +104,7 @@ abstract class SqlDriver {
 	}
 
 	/** Get structured types
-	* @return list<string>[]|list<string> [$description => [$type, ...], ...]
+	* @return array<list<string>|string> [$description => [$type, ...], ...], a value which is not an array is a type without a description
 	*/
 	function structuredTypes(): array {
 		return array_map('array_keys', $this->types);
@@ -230,6 +250,14 @@ abstract class SqlDriver {
 	function slowQuery(string $query, int $timeout) {
 	}
 
+	/** Get operators usable in select
+	* @param ?TableStatus $tableStatus null in the search through all tables
+	* @return list<string> a list for a single table must be a superset of the general one
+	*/
+	function operators(?array $tableStatus): array {
+		return array();
+	}
+
 	/** Convert column to be searchable
 	* @param string $idf escaped column name
 	* @param array{op:string, val:string} $val
@@ -323,6 +351,13 @@ abstract class SqlDriver {
 		return true;
 	}
 
+	/** Check whether the table definition can be altered
+	* @param TableStatus $tableStatus
+	*/
+	function supportsAlterTable(array $tableStatus): bool {
+		return true;
+	}
+
 	/** Return list of supported index algorithms, first one is default
 	 * @param TableStatus $tableStatus
 	 * @return list<string>
@@ -336,6 +371,22 @@ abstract class SqlDriver {
 	*/
 	function indexOpclasses(): array {
 		return array();
+	}
+
+	/** Get tables used internally by a table
+	* @return list<array{table: string, ns: string}>
+	*/
+	function shadowTables(string $table): array {
+		return array();
+	}
+
+	/** Get a condition for a fulltext search
+	* @param string $name index name
+	* @param Index $index
+	*/
+	function fulltextSql(string $name, array $index, string $query, bool $boolean): string {
+		return "MATCH (" . implode(", ", array_map('Adminer\idf_escape', $index["columns"])) . ") AGAINST ("
+			. q($query) . ($boolean ? " IN BOOLEAN MODE" : "") . ")";
 	}
 
 	/** Get defined check constraints

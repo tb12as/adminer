@@ -1,15 +1,45 @@
 ## Adminer dev
+- Verify all parts of the server name before connecting (GHSA-rwxg-xph9-82cj, regression from 5.5.1)
 - Do not drop the old check constraint when the new one cannot be created
+- Replace the whole last line by the ellipsis when shortening a multi-line text, e.g. a long SQL command
 - Alter routine: Preserve all characteristics and edit them in a form instead of in the definition
+- Autocomplete: Get the columns of the database faster (bug #1328)
 - Autocomplete: Offer also in the definition of a routine, an event and a view
+- Edit: Keep the enum value selected by the user after an error (regression from 5.4.0)
+- Edit: Do not highlight a valid date or time value as too long, e.g. in a datetime(3) column
+- Select: Keep "Load more data" on the screen when scrolling a wide table horizontally
+- SQL command: Skip a command with comments only (bug #1331)
 - RTL: Mirror the borders, alignment, margins and paddings
 - Cache the assets of the compiled version in a service worker
 - MySQL: Display the check constraint clause without the extra escaping added by information_schema
+- MySQL: Do not repeat the error of an unreadable table in the comments of the following tables
+- MySQL: Display the error of an unreadable table next to its comment
 - MySQL 9: Create routines with LANGUAGE JAVASCRIPT
+- MySQL 26.7: Link the documentation of the used version
+- MariaDB: Display an unreadable table as a table with the error instead of as a view
+- PostgreSQL: Do not edit and delete the selected row without a unique key in other partitions (bug #1326)
+- PostgreSQL PDO: Fix export of boolean values (bug #1330, regression from 5.4.4)
+- SQLite: Get the generated columns and collations also from a single-line CREATE TABLE
+- SQLite: Support FTS5 and other virtual tables
 - MS SQL: Get the base type of a column declared with a user-defined type
+- MS SQL: Offer all the data types supported by the server, e.g. uniqueidentifier (bug #1327)
+- MS SQL: Add the database Check button
+- MS SQL: Link the documentation of the used version
+- Oracle: Link the documentation of the used version
 - ClickHouse: Print only errors from ClickHouse (GHSA-77qq-q8fv-x45v, regression from 6.0.0)
 - ClickHouse: Highlight the queries
 - Firebird: Highlight the queries
+- ClickHouse, IGDB, Redis, SimpleDB: Fix loading the driver in the compiled Adminer (bug #1325)
+- Elasticsearch, Firebird, IGDB, IMAP, MongoDB, Redis, SimpleDB: Fix a fatal error on the pages calling a function missing in the driver
+- Firebird: Remove the status page, the driver cannot provide it
+### Plugins
+- Method serviceWorker() to disable the service worker
+- Db::attach() gets the server parsed to scheme, host, port, socket and path instead of the string
+- Methods Driver::supportsAlterTable(), Driver::shadowTables(), Driver::fulltextSql() and property Driver::$fulltextOperator
+- TableStatus key 'partition' renamed to 'dependent', it marks also the tables belonging to another table
+- Property Driver::$operators replaced by method Driver::operators()
+### Internal
+- Mark the code used only in the compiled or only in the development version
 
 ## Adminer 6.0.1 (released 2026-08-14)
 - Run the development version from the adminer/ directory alone, copied anywhere and under any name

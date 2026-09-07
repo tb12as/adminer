@@ -43,6 +43,12 @@ if ($tables_views && !$error && !$_POST["search"]) {
 				$message .= "<b>" . h($table) . "</b>: " . h($row["integrity_check"]) . "<br>";
 			}
 		}
+	} elseif (JUSH == "mssql" && $_POST["check"]) {
+		foreach ((array) $_POST["tables"] as $table) {
+			foreach (get_rows("DBCC CHECKTABLE (" . q(table($table)) . ") WITH TABLERESULTS") as $row) {
+				$message .= "<b>" . h($table) . "</b>: " . h($row["MessageText"]) . "<br>";
+			}
+		}
 	} elseif (JUSH != "sql") {
 		$result = (JUSH == "sqlite"
 			? queries("VACUUM")
@@ -99,7 +105,7 @@ if (adminer()->homepage()) {
 			}
 			if (function_exists('Adminer\alter_table')) {
 				$columns["Data_length"] = array(
-					lang('Data Length') . doc_link(array('sql' => 'show-table-status.html', 'pgsql' => 'functions-admin.html#FUNCTIONS-ADMIN-DBOBJECT', 'oracle' => 'REFRN20286')),
+					lang('Data Length') . doc_link(array('sql' => 'show-table-status.html', 'pgsql' => 'functions-admin.html#FUNCTIONS-ADMIN-DBOBJECT', 'oracle' => 'refrn/ALL_TABLES.html')),
 					"create",
 					lang('Alter table'),
 				);
@@ -120,7 +126,7 @@ if (adminer()->homepage()) {
 				);
 			}
 			$columns["Rows"] = array(
-				lang('Rows') . doc_link(array('sql' => 'show-table-status.html', 'pgsql' => 'catalog-pg-class.html#CATALOG-PG-CLASS', 'oracle' => 'REFRN20286')),
+				lang('Rows') . doc_link(array('sql' => 'show-table-status.html', 'pgsql' => 'catalog-pg-class.html#CATALOG-PG-CLASS', 'oracle' => 'refrn/ALL_TABLES.html')),
 				"select",
 				lang('Select data'),
 			);
@@ -172,7 +178,7 @@ if (adminer()->homepage()) {
 						$id = " id='$key-" . h($name) . "'";
 						echo ($column[1]
 							? "<td align='right'><a href='" . h(ME . "$column[1]=") . url_escape($name) . "'$id title='$column[2]'>" . format_status($status, $key) . "</a>"
-							: "<td$id>" . h(idx($status, $key, '?'))
+							: "<td$id>" . h(idx($status, $key, '?')) . ($key == "Comment" && $status["Error"] ? " <span class='error'>" . h($status["Error"]) . "</span>" : "")
 						);
 					}
 					$tables++;
@@ -199,11 +205,12 @@ if (adminer()->homepage()) {
 				$optimize = "<input type='submit' name='optimize' value='" . lang('Optimize') . "'" . on_help(JUSH == "sql" ? "OPTIMIZE TABLE" : "VACUUM ANALYZE") . "> ";
 				$print = (JUSH == "sqlite" ? $vacuum . "<input type='submit' name='check' value='" . lang('Check') . "'" . on_help("PRAGMA integrity_check") . "> "
 				: (JUSH == "pgsql" ? $vacuum . $optimize
+				: (JUSH == "mssql" ? "<input type='submit' name='check' value='" . lang('Check') . "'" . on_help("DBCC CHECKTABLE") . "> "
 				: (JUSH == "sql" ? "<input type='submit' value='" . lang('Analyze') . "'" . on_help("ANALYZE TABLE") . "> "
 					. $optimize
 					. "<input type='submit' name='check' value='" . lang('Check') . "'" . on_help("CHECK TABLE") . "> "
 					. "<input type='submit' name='repair' value='" . lang('Repair') . "'" . on_help("REPAIR TABLE") . "> "
-				: "")))
+				: ""))))
 				. (function_exists('Adminer\truncate_tables')
 					? "<input type='submit' name='truncate' value='" . lang('Truncate') . "'" . confirm()
 						. on_help(JUSH == "sqlite" ? "DELETE" : "TRUNCATE" . (JUSH == "pgsql" ? "" : " TABLE")) . "> "

@@ -7,7 +7,7 @@ namespace Adminer;
 function referencable_primary(string $self): array {
 	$return = array(); // table_name => field
 	foreach (table_status('', true) as $table_name => $table) {
-		if ($table_name != $self && fk_support($table)) {
+		if ($table_name != $self && !$table["dependent"] && fk_support($table)) {
 			foreach (fields($table_name) as $field) {
 				if ($field["primary"]) {
 					if ($return[$table_name]) { // multi column primary key
@@ -41,6 +41,7 @@ if ($TABLE != "") {
 		$error = lang('No tables.');
 	}
 }
+$alterable = ($TABLE == "" || driver()->supportsAlterTable($table_status)); // e.g. a virtual table can be only renamed and dropped
 
 $row = $_POST;
 $row["fields"] = (array) $row["fields"];
@@ -63,7 +64,7 @@ if ($_POST && !process_fields($row["fields"]) && !$error) {
 		$orig_field = reset($orig_fields);
 		$after = " FIRST";
 
-		foreach ($row["fields"] as $key => $field) {
+		foreach ($row["fields"] as $field) {
 			$foreign_key = $foreign_keys[$field["type"]];
 			$type_field = ($foreign_key !== null ? $referencable_primary[$foreign_key] : $field); //! can collide with user defined type
 			if ($field["field"] != "") {
@@ -204,10 +205,10 @@ if ($max_columns) {
 <?php
 if (support("columns") || $TABLE == "") {
 	echo lang('Table name') . ": <input name='name'" . ($TABLE == "" && !$_POST ? " autofocus" : "") . " data-maxlength='64' value='" . h($row["name"]) . "' autocapitalize='off'>\n";
-	echo ($engines
+	echo (!$alterable ? h($table_status["Engine"]) . "\n" : ($engines
 		? html_select("Engine", array("" => "(" . lang('engine') . ")") + $engines, $row["Engine"], on('change', 'helpClose') . on_help_value()) . "\n"
 		: ""
-	);
+	));
 	if ($collations) {
 		echo "<datalist id='collations'>" . optionlist($collations) . "</datalist>\n";
 		echo (preg_match("~sqlite|mssql~", JUSH) ? "" : "<input list='collations' name='Collation' value='" . h($row["Collation"]) . "' placeholder='(" . lang('collation') . ")'>\n");
@@ -215,7 +216,7 @@ if (support("columns") || $TABLE == "") {
 	echo "<input type='submit' value='" . lang('Save') . "'>\n";
 }
 
-if (support("columns")) {
+if (support("columns") && $alterable) {
 	echo "<div class='scrollable'>\n";
 	echo "<table id='edit-fields' class='nowrap'>\n";
 	edit_fields($row["fields"], $collations, "TABLE", $foreign_keys);

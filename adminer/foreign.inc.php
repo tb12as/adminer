@@ -69,7 +69,9 @@ if ($row["ns"] != "") {
 	$orig_schema = get_schema();
 	set_schema($row["ns"]);
 }
-$referencable = array_keys(array_filter(table_status('', true), 'Adminer\fk_support'));
+$referencable = array_keys(array_filter(table_status('', true), function (array $table_status): bool {
+	return !$table_status["dependent"] && fk_support($table_status);
+}));
 $target = array_keys(fields(in_array($row["table"], $referencable) ? $row["table"] : reset($referencable)));
 $attrs = on('change', 'foreignChange');
 echo "<p><label>" . lang('Target table') . ": " . html_select("table", $referencable, $row["table"], $attrs) . "</label>\n";
@@ -114,7 +116,7 @@ foreach ($row["source"] as $key => $val) {
 	'mariadb' => "foreign-keys/",
 	'pgsql' => "sql-createtable.html#SQL-CREATETABLE-PARMS-REFERENCES",
 	'mssql' => "t-sql/statements/create-table-transact-sql",
-	'oracle' => "SQLRF01111",
+	'oracle' => "sqlrf/constraint.html",
 )); ?>
 <p>
 <input type='submit' value='<?php echo lang('Save'); ?>'>

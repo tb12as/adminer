@@ -522,26 +522,48 @@ function tar_file(string $filename, $tmp_file): void {
 	echo str_repeat("\0", 511 - ($tmp_file->size + 511) % 512);
 }
 
+/** Get the version of the database system as used in its documentation URLs */
+function doc_version(): string {
+	$server_info = connection()->server_info;
+	if (JUSH == 'oracle') {
+		// the version is the major number of e.g. "Oracle Database 19c ... Version 19.3.0.0.0", PDO reports the version alone
+		// Oracle names the releases by the year since 18 and publishes only those under it; 12.2 and older
+		// have a layout of their own, so they get the oldest documentation JUSH links
+		preg_match('~(?:.* |^)(\d+)\.\d+\.\d+\.\d+\.\d+~s', $server_info, $match);
+		return (($match[1] ?? 0) >= 18 ? $match[1] : "19");
+	}
+	// MySQL uses calendar versioning since 26.7 so the URL needs both the year and the month
+	// the two most significant digits give the documented version of PostgreSQL (18, 9.6) and MS SQL (16)
+	$regexp = (JUSH == 'sql' ? '~^\d+\.\d+~' : '~^\d\.?\d~');
+	$version = (preg_match($regexp, $server_info, $match) ? $match[0] : "");
+	if (JUSH == 'mssql') {
+		// MS SQL identifies the versions by monikers: https://learn.microsoft.com/en-us/sql/sql-server/versioning-system-monikers-ui-sql-server
+		// Azure SQL Database reports the version of SQL Server 2014 which is not documented anymore, SQL Server 2017 is the oldest documented version
+		//! SERVERPROPERTY('EngineEdition') would distinguish Managed Instance (azuresqldb-mi-current), Synapse (azure-sqldw-latest) and Fabric (fabric-sqldb) but it costs an extra query
+		return ($version >= 15 ? "sql-server-ver$version" : ($version == 12 ? "azuresqldb-current" : "sql-server-2017"));
+	}
+	return $version;
+}
+
 /** Create link to database documentation
 * @param string[] $paths JUSH => $path
 * @param string $text HTML code
 * @return string HTML code
 */
 function doc_link(array $paths, string $text = "<sup>?</sup>"): string {
-	$server_info = connection()->server_info;
-	$version = preg_replace('~^(\d\.?\d).*~s', '\1', $server_info); // two most significant digits
+	$version = doc_version();
 	$urls = array(
 		'sql' => "https://dev.mysql.com/doc/refman/$version/en/",
 		'sqlite' => "https://www.sqlite.org/",
 		'pgsql' => "https://www.postgresql.org/docs/" . (connection()->flavor == 'cockroach' ? "current" : $version) . "/",
 		'mssql' => "https://learn.microsoft.com/en-us/sql/",
-		'oracle' => "https://www.oracle.com/pls/topic/lookup?ctx=db" . preg_replace('~^.* (\d+)\.(\d+)\.\d+\.\d+\.\d+.*~s', '\1\2', $server_info) . "&id=",
+		'oracle' => "https://docs.oracle.com/en/database/oracle/oracle-database/$version/",
 	);
 	if (connection()->flavor == 'maria') {
 		$urls['sql'] = "https://mariadb.com/kb/en/";
 		$paths['sql'] = (isset($paths['mariadb']) ? $paths['mariadb'] : str_replace(".html", "/", $paths['sql']));
 	}
-	return ($paths[JUSH] ? "<a href='" . h($urls[JUSH] . $paths[JUSH] . (JUSH == 'mssql' ? "?view=sql-server-ver$version" : "")) . "'" . target_blank() . ">$text</a>" : "");
+	return ($paths[JUSH] ? "<a href='" . h($urls[JUSH] . $paths[JUSH] . (JUSH == 'mssql' ? "?view=$version" : "")) . "'" . target_blank() . ">$text</a>" : "");
 }
 
 /** Compute size of database
