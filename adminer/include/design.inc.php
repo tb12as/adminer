@@ -74,6 +74,14 @@ const shortcutLabels = {
 	empty: '" . js_escape(lang('No matching navigation')) . "',
 	database: '" . js_escape(lang('Database')) . "',
 	databases: '" . js_escape(lang('Filter databases')) . "',
+	hint: '" . js_escape(lang('Command hints')) . "',
+	hintSearch: '" . js_escape(lang('Filter command hints')) . "',
+	searchAction: '" . js_escape(lang('Search')) . "',
+	execute: '" . js_escape(lang('Execute')) . "',
+	save: '" . js_escape(lang('Save')) . "',
+	move: '" . js_escape(lang('Move between rows')) . "',
+	autocomplete: '" . js_escape(lang('SQL autocomplete')) . "',
+	close: '" . js_escape(lang('Close')) . "',
 };");
 	echo "<div id='help' class='jush-" . JUSH . " jsonly hidden'" . on('mouseover', 'helpKeep') . on('mouseout', 'helpMouseout') . "></div>\n";
 	echo "<div id='content'>\n";

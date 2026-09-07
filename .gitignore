@@ -2,6 +2,7 @@
 /adminer/adminer-dark.css
 /editor/adminer.css
 /editor/adminer-dark.css
+/.env
 /adminer*.php
 /editor*.php
 /drivers/

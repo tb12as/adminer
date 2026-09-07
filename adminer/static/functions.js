@@ -425,7 +425,7 @@ function selectAddRow() {
 		select.selectedIndex = 0;
 	}
 	for (const input of qsa('input', row)) {
-		if (input.classList.contains('search-column')) {
+		if (input.classList.contains('search-column') || input.classList.contains('search-operator')) {
 			continue;
 		}
 		input.name = input.name.replace(/[a-z]\[\d+/, '$&1');
@@ -554,19 +554,22 @@ function searchColumnChoose(picker, option) {
 	fire(picker.select, 'change');
 }
 
-/** Set up searchable column selects
+/** Set up searchable column and operator selects
 * @param {HTMLElement|Document} [context=document]
 */
 function setupSearchColumns(context = document) {
-	for (const select of qsa('select[name$="[col]"]', context)) {
+	for (const select of qsa('select[name$="[col]"], select[name$="[op]"]', context)) {
 		if (!select.closest('#fieldset-search') || select.searchColumn) {
 			continue;
 		}
+		const operator = select.name.endsWith('[op]');
+		const inputClass = (operator ? 'search-operator' : 'search-column');
+		const listClass = (operator ? 'search-operator-list' : 'search-column-list');
 		let input = select.previousElementSibling;
-		if (!input || !input.matches('input.search-column')) {
+		if (!input || !input.matches('input.' + inputClass)) {
 			input = document.createElement('input');
 			input.type = 'search';
-			input.className = 'search-column';
+			input.className = inputClass;
 			const labelledBy = select.getAttribute('aria-labelledby');
 			if (labelledBy) {
 				input.setAttribute('aria-labelledby', labelledBy);
@@ -574,12 +577,12 @@ function setupSearchColumns(context = document) {
 			select.parentNode.insertBefore(input, select);
 		}
 		let list = select.nextElementSibling;
-		if (!list || !list.matches('ul.search-column-list')) {
+		if (!list || !list.matches('ul.' + listClass)) {
 			list = document.createElement('ul');
-			list.className = 'search-column-list';
+			list.className = listClass;
 			select.parentNode.insertBefore(list, select.nextSibling);
 		}
-		list.id = 'search-column-' + ++searchColumnId;
+		list.id = listClass + '-' + ++searchColumnId;
 		list.setAttribute('role', 'listbox');
 		list.hidden = true;
 		select.parentNode.classList.add('search-column-picker');
@@ -590,7 +593,8 @@ function setupSearchColumns(context = document) {
 		const picker = {select: select, input: input, list: list, options: [], active: -1, query: ''};
 		select.searchColumn = picker;
 		const selected = () => {
-			input.value = (select.selectedIndex ? select.options[select.selectedIndex].text : '');
+			const option = select.options[select.selectedIndex];
+			input.value = (option && (select.selectedIndex || option.value) ? option.text : '');
 		};
 		input.addEventListener('focus', () => {
 			input.select();
@@ -672,6 +676,60 @@ function isEscape(event) {
 }
 
 let shortcuts;
+let shortcutSequence = false;
+let shortcutSequenceTimer = null;
+
+/** Get a context navigation action for a key sequence
+* @param {string} key
+* @return {?{href?: string, label: string, action?: function}}
+*/
+function shortcutAction(key) {
+	if (key == 'h') {
+		return {label: shortcutLabels.hint, action: shortcutHint};
+	}
+	const selectors = {
+		i: '#content > p.links a[href*="edit="], #content > p.tabs a[href*="edit="]',
+		s: '#content > p.links a[href*="table="]',
+		q: '#menu a[href*="sql="]',
+	};
+	const selector = selectors[key];
+	const el = (selector ? qs(selector) : null);
+	return (el ? {href: el.href, label: el.textContent.trim()} : null);
+}
+
+/** Clear the pending navigation key sequence */
+function shortcutSequenceClear() {
+	shortcutSequence = false;
+	clearTimeout(shortcutSequenceTimer);
+	shortcutSequenceTimer = null;
+}
+
+/** Ignore activation of a displayed command hint */
+function shortcutHintNoop() {
+	// Command hints are informational.
+}
+
+/** Show keyboard command hints */
+function shortcutHint() {
+	const links = [
+		{label: 'g h — ' + shortcutLabels.hint, action: shortcutHintNoop},
+		{label: 'Ctrl/Cmd+P — ' + shortcutLabels.title, action: shortcutHintNoop},
+		{label: 'Ctrl/Cmd+Shift+D — ' + shortcutLabels.database, action: shortcutHintNoop},
+		{label: '/ — ' + shortcutLabels.searchAction, action: shortcutHintNoop},
+		{label: 'Ctrl/Cmd+Enter — ' + shortcutLabels.execute, action: shortcutHintNoop},
+		{label: 'Ctrl/Cmd+Shift+Enter — ' + shortcutLabels.save, action: shortcutHintNoop},
+		{label: 'Ctrl/Cmd+Shift+↑/↓ — ' + shortcutLabels.move, action: shortcutHintNoop},
+		{label: 'Ctrl/Cmd+Space — ' + shortcutLabels.autocomplete, action: shortcutHintNoop},
+		{label: 'Esc — ' + shortcutLabels.close, action: shortcutHintNoop},
+	];
+	for (const key of ['i', 's', 'q']) {
+		const action = shortcutAction(key);
+		if (action) {
+			links.push({label: 'g ' + key + ' — ' + action.label, action: shortcutHintNoop});
+		}
+	}
+	return shortcutOpen(links, shortcutLabels.hint, shortcutLabels.hintSearch);
+}
 
 /** Get links available through the keyboard shortcuts
 * @return {Array<{href: string, label: string}>}
@@ -878,13 +936,34 @@ function shortcutKeydown(event) {
 			shortcutFollow(shortcuts.results[shortcuts.active], isCtrl(event) && !event.shiftKey, isCtrl(event) && event.shiftKey);
 			return false;
 		}
-	} else if (isCtrl(event) && event.shiftKey && event.key.toLowerCase() == 'd') {
-		return shortcutDatabase();
-	} else if (event.key == '/' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
-		&& !(event.target.closest && event.target.closest('input, textarea, select, [contenteditable]'))) {
-		return shortcutSearch();
-	} else if (isCtrl(event) && !event.shiftKey && event.key.toLowerCase() == 'p') {
-		return shortcutOpen();
+	} else {
+		const editable = event.target.closest && event.target.closest('input, textarea, select, [contenteditable]');
+		if (!editable && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+			const key = event.key.toLowerCase();
+			if (shortcutSequence) {
+				const action = shortcutAction(key);
+				shortcutSequenceClear();
+				if (action) {
+					shortcutFollow(action);
+					return false;
+				}
+			}
+			if (key == 'g') {
+				shortcutSequence = true;
+				shortcutSequenceTimer = setTimeout(shortcutSequenceClear, 1000);
+				return false;
+			}
+		} else if (shortcutSequence) {
+			shortcutSequenceClear();
+		}
+		if (isCtrl(event) && event.shiftKey && event.key.toLowerCase() == 'd') {
+			return shortcutDatabase();
+		} else if (event.key == '/' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+			&& !editable) {
+			return shortcutSearch();
+		} else if (isCtrl(event) && !event.shiftKey && event.key.toLowerCase() == 'p') {
+			return shortcutOpen();
+		}
 	}
 }
 
@@ -934,6 +1013,7 @@ function bodyKeydown(event) {
 * @param {MouseEvent} event
 */
 function bodyClick(event) {
+	shortcutSequenceClear();
 	delegateEvent(event);
 	const target = event.target;
 	const toggler = target.closest && target.closest('.toggle'); // closest && - the target can be a text node, e.g. from fire()

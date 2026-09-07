@@ -121,6 +121,37 @@ test('Keyboard navigation', async () => {
 		+ encodeURIComponent('CREATE TABLE sales_transaction_items (id int); CREATE TABLE sales_transaction_summary (id int); CREATE TABLE educational_institution (id int)'));
 	await button(page, 'Execute').click();
 	await goto(page, '/adminer/?username=ODBC&db=adminer_test&select=interprets');
+	await page.keyboard.press('g');
+	await page.keyboard.press('h');
+	const hints = page.locator('#shortcuts');
+	await expect(hints).toBeVisible();
+	await expect(hints).toContainText('g h');
+	await expect(hints).toContainText('g i');
+	await expect(hints).toContainText('g s');
+	await expect(hints).toContainText('g q');
+	await page.keyboard.press('Escape');
+	await page.keyboard.press('g');
+	await Promise.all([
+		page.waitForURL(/edit=interprets/),
+		page.keyboard.press('i'),
+	]);
+	await goto(page, '/adminer/?username=ODBC&db=adminer_test&select=interprets');
+	await page.keyboard.press('g');
+	await Promise.all([
+		page.waitForURL(/table=interprets/),
+		page.keyboard.press('s'),
+	]);
+	await goto(page, '/adminer/?username=ODBC&db=adminer_test&select=interprets');
+	await page.keyboard.press('g');
+	await Promise.all([
+		page.waitForURL(/sql=/),
+		page.keyboard.press('q'),
+	]);
+	const sqlEditor = page.locator('textarea').first();
+	await sqlEditor.focus();
+	await page.keyboard.press('g');
+	await page.keyboard.press('q');
+	await expect(page).toHaveURL(/sql=/);
 	await page.keyboard.press('Control+P');
 	const shortcuts = page.locator('#shortcuts');
 	const input = shortcuts.locator('input');
@@ -193,6 +224,13 @@ test('Keyboard database and table search', async () => {
 	]);
 	await goto(page, '/adminer/?username=ODBC&db=adminer_test&select=albums');
 	await page.locator('a[href="#fieldset-search"].toggle').click();
+	const operator = page.locator('input.search-operator').first();
+	await expect(operator).toHaveValue('=');
+	await operator.fill('>=');
+	const operators = page.locator('.search-operator-list').first();
+	await expect(operators.getByRole('option')).toHaveCount(1);
+	await operator.press('Enter');
+	await expect(page.locator('[name="where[0][op]"]')).toHaveValue('>=');
 	await expect(page.locator('input.search-column')).toHaveCount(1);
 	await page.keyboard.press('/');
 	const column = page.locator('input.search-column').first();
@@ -661,7 +699,11 @@ test('Editor', async () => {
 		page.keyboard.press('Enter'),
 	]);
 	await link(page, 'Interprets').click();
-	await link(page, 'New item').click();
+	await page.keyboard.press('g');
+	await Promise.all([
+		page.waitForURL(/edit=interprets/),
+		page.keyboard.press('i'),
+	]);
 	await page.locator('[name="fields[name]"]').fill('Michael Jackson');
 	await button(page, 'Save').click();
 	await link(page, 'Albums').click();
