@@ -688,7 +688,7 @@ function shortcutAction(key) {
 		return {label: shortcutLabels.hint, action: shortcutHint};
 	}
 	if (key == 't') {
-		return (qs('#css-dark') ? {label: shortcutLabels.theme, action: toggleTheme} : null);
+		return (qs('.theme-dark') ? {label: shortcutLabels.theme, action: toggleTheme} : null);
 	}
 	const selectors = {
 		i: '#content > p.links a[href*="edit="], #content > p.tabs a[href*="edit="]',
@@ -940,14 +940,19 @@ function shortcutDatabase() {
 }
 
 /** Force and persist a light or dark theme, overriding the OS preference
+* covers the built-in dark.css and any custom skin shipping both a light and a dark variant
 * @param {boolean} dark
 */
 function setTheme(dark) {
-	const link = qs('#css-dark');
-	if (!link) {
+	if (!qs('.theme-dark, .theme-light')) {
 		return;
 	}
-	link.media = (dark ? 'all' : 'not all');
+	for (const link of qsa('.theme-dark')) {
+		link.media = (dark ? 'all' : 'not all');
+	}
+	for (const link of qsa('.theme-light')) {
+		link.media = (dark ? 'not all' : 'all');
+	}
 	const meta = qs('meta[name=color-scheme]');
 	if (meta) {
 		meta.content = (dark ? 'dark' : 'light');
@@ -959,7 +964,7 @@ function setTheme(dark) {
 * @return {boolean} false
 */
 function toggleTheme() {
-	const link = qs('#css-dark');
+	const link = qs('.theme-dark');
 	if (!link) {
 		return false;
 	}

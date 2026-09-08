@@ -40,21 +40,13 @@ function page_header(string $title, string $error = "", $breadcrumb = array(), s
 	);
 	$media = " media='(prefers-color-scheme: dark)'";
 	if ($dark !== false) {
-		echo "<link rel='stylesheet'" . ($dark ? "" : " id='css-dark'" . $media) . " href='" . DIR . "static/dark.css'>\n";
+		echo "<link rel='stylesheet'" . ($dark ? "" : " class='theme-dark'" . $media) . " href='" . DIR . "static/dark.css'>\n";
 	}
 	echo "<meta name='color-scheme' content='" . ($dark === null ? "light dark" : ($dark ? "dark" : "light")) . "'>\n";
 
 	echo script_src(DIR . "static/functions.js");
 	if (defined('Adminer\DIR')) { // the compiled version merges editing.js into functions.js
 		echo script_src("static/editing.js");
-	}
-	if ($dark === null) { // only when both skins are available and no plugin forces one - apply a stored user override before the first paint
-		echo script("
-const theme = localStorage.getItem('adminer_theme');
-if (theme) {
-	setTheme(theme == 'dark');
-}
-");
 	}
 	if (adminer()->head($dark)) {
 		echo "<link rel='icon' href='data:image/gif;base64,"
@@ -63,10 +55,18 @@ if (theme) {
 	}
 	foreach ($css as $url => $mode) {
 		$attrs = ($mode == 'dark' && !$dark
-			? $media
-			: ($mode == 'light' && $has_dark ? " media='(prefers-color-scheme: light)'" : "")
+			? " class='theme-dark'" . $media
+			: ($mode == 'light' && $has_dark ? " class='theme-light' media='(prefers-color-scheme: light)'" : "")
 		);
 		echo "<link rel='stylesheet'$attrs href='" . h($url) . "'>\n";
+	}
+	if ($dark === null) { // only when both skins are available and no plugin forces one - apply a stored user override before the first paint
+		echo script("
+const theme = localStorage.getItem('adminer_theme');
+if (theme) {
+	setTheme(theme == 'dark');
+}
+");
 	}
 	echo "\n<body class='";
 	adminer()->bodyClass();
