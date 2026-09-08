@@ -687,6 +687,9 @@ function shortcutAction(key) {
 	if (key == 'h') {
 		return {label: shortcutLabels.hint, action: shortcutHint};
 	}
+	if (key == 't') {
+		return (qs('#css-dark') ? {label: shortcutLabels.theme, action: toggleTheme} : null);
+	}
 	const selectors = {
 		i: '#content > p.links a[href*="edit="], #content > p.tabs a[href*="edit="]',
 		s: '#content > p.links a[href*="table="]',
@@ -712,21 +715,36 @@ function shortcutHintNoop() {
 /** Show keyboard command hints */
 function shortcutHint() {
 	const links = [
-		{label: 'g h — ' + shortcutLabels.hint, action: shortcutHintNoop},
+		{label: shortcutLabels.groupCtrl, header: true},
 		{label: 'Ctrl/Cmd+P — ' + shortcutLabels.title, action: shortcutHintNoop},
 		{label: 'Ctrl/Cmd+Shift+D — ' + shortcutLabels.database, action: shortcutHintNoop},
-		{label: '/ — ' + shortcutLabels.searchAction, action: shortcutHintNoop},
 		{label: 'Ctrl/Cmd+Enter — ' + shortcutLabels.execute, action: shortcutHintNoop},
 		{label: 'Ctrl/Cmd+Shift+Enter — ' + shortcutLabels.save, action: shortcutHintNoop},
 		{label: 'Ctrl/Cmd+Shift+↑/↓ — ' + shortcutLabels.move, action: shortcutHintNoop},
 		{label: 'Ctrl/Cmd+Space — ' + shortcutLabels.autocomplete, action: shortcutHintNoop},
-		{label: 'Esc — ' + shortcutLabels.close, action: shortcutHintNoop},
+		{label: shortcutLabels.groupSequence, header: true},
+		{label: 'g h — ' + shortcutLabels.hint, action: shortcutHintNoop},
 	];
-	for (const key of ['i', 's', 'q']) {
+	for (const key of ['i', 's', 'q', 't']) {
 		const action = shortcutAction(key);
 		if (action) {
 			links.push({label: 'g ' + key + ' — ' + action.label, action: shortcutHintNoop});
 		}
+	}
+	links.push(
+		{label: shortcutLabels.groupKey, header: true},
+		{label: '/ — ' + shortcutLabels.searchAction, action: shortcutHintNoop},
+		{label: 'Esc — ' + shortcutLabels.close, action: shortcutHintNoop}
+	);
+	if (qs('#table')) {
+		links.push(
+			{label: 'j/k — ' + shortcutLabels.rowMove, action: shortcutHintNoop},
+			{label: 'Enter — ' + shortcutLabels.rowEdit, action: shortcutHintNoop},
+			{label: 'x — ' + shortcutLabels.rowCheck, action: shortcutHintNoop}
+		);
+	}
+	if (qs('#pagination')) {
+		links.push({label: '[ / ] — ' + shortcutLabels.pageNav, action: shortcutHintNoop});
 	}
 	return shortcutOpen(links, shortcutLabels.hint, shortcutLabels.hintSearch);
 }
@@ -797,6 +815,19 @@ function shortcutDialog() {
 	return dialog;
 }
 
+/** Find the next selectable (non-header) result, wrapping around
+* @param {number} from
+* @param {number} delta +1 or -1
+* @return {number}
+*/
+function shortcutSkipHeaders(from, delta) {
+	let index = from;
+	do {
+		index = (index + delta + shortcuts.results.length) % shortcuts.results.length;
+	} while (shortcuts.results[index].header && index != from);
+	return index;
+}
+
 /** Print the matching keyboard shortcuts */
 function shortcutResults() {
 	const dialog = shortcutDialog();
@@ -805,6 +836,9 @@ function shortcutResults() {
 	const query = input.value.toLowerCase();
 	shortcuts.results = shortcuts.links.filter(link => matchesSearch(query, link.label.toLowerCase()));
 	shortcuts.active = Math.min(shortcuts.active, shortcuts.results.length - 1);
+	if (shortcuts.active >= 0 && shortcuts.results[shortcuts.active].header) {
+		shortcuts.active = shortcutSkipHeaders(shortcuts.active, 1);
+	}
 	results.innerHTML = '';
 	if (!shortcuts.results.length) {
 		const result = document.createElement('li');
@@ -815,12 +849,16 @@ function shortcutResults() {
 	}
 	for (const [index, link] of shortcuts.results.entries()) {
 		const result = document.createElement('li');
-		result.id = 'shortcut-' + index;
-		result.setAttribute('role', 'option');
 		result.textContent = link.label;
-		alterClass(result, 'active', index == shortcuts.active);
-		result.setAttribute('aria-selected', index == shortcuts.active);
-		result.addEventListener('click', () => shortcutFollow(link));
+		if (link.header) {
+			result.className = 'shortcut-group';
+		} else {
+			result.id = 'shortcut-' + index;
+			result.setAttribute('role', 'option');
+			alterClass(result, 'active', index == shortcuts.active);
+			result.setAttribute('aria-selected', index == shortcuts.active);
+			result.addEventListener('click', () => shortcutFollow(link));
+		}
 		results.append(result);
 	}
 	input.setAttribute('aria-activedescendant', 'shortcut-' + shortcuts.active);
@@ -836,6 +874,9 @@ function shortcutOpen(links = shortcutLinks(), title = shortcutLabels.title, sea
 	}
 	const dialog = shortcutDialog();
 	shortcuts = {links: links, results: links, active: 0, focus: document.activeElement};
+	if (links[0].header) {
+		shortcuts.active = shortcutSkipHeaders(0, 1);
+	}
 	dialog.hidden = false;
 	const input = qs('input', dialog);
 	qs('h3', dialog).textContent = title;
@@ -898,6 +939,35 @@ function shortcutDatabase() {
 	return shortcutOpen(links, shortcutLabels.database, shortcutLabels.databases);
 }
 
+/** Force and persist a light or dark theme, overriding the OS preference
+* @param {boolean} dark
+*/
+function setTheme(dark) {
+	const link = qs('#css-dark');
+	if (!link) {
+		return;
+	}
+	link.media = (dark ? 'all' : 'not all');
+	const meta = qs('meta[name=color-scheme]');
+	if (meta) {
+		meta.content = (dark ? 'dark' : 'light');
+	}
+	localStorage.setItem('adminer_theme', dark ? 'dark' : 'light');
+}
+
+/** Toggle between dark and light theme
+* @return {boolean} false
+*/
+function toggleTheme() {
+	const link = qs('#css-dark');
+	if (!link) {
+		return false;
+	}
+	const dark = (link.media == 'all' || (link.media != 'not all' && matchMedia('(prefers-color-scheme: dark)').matches));
+	setTheme(!dark);
+	return false;
+}
+
 /** Focus search in the current table
 * @return {boolean} false
 */
@@ -908,6 +978,78 @@ function shortcutSearch() {
 	}
 	alterClass(fieldset, 'hidden', false);
 	qs('input.search-column, [name$="[col]"]', fieldset).focus();
+	return false;
+}
+
+let selectCursor = null; // currently focused <tr> in the results table
+
+/** Move the keyboard row cursor in the results table
+* @param {number} delta +1 or -1
+* @return {boolean} false if moved
+*/
+function selectMove(delta) {
+	const table = qs('#table');
+	if (!table) {
+		return;
+	}
+	const rows = [...qsa('tbody tr', table)];
+	if (!rows.length) {
+		return;
+	}
+	const index = Math.min(Math.max(rows.indexOf(selectCursor) + delta, 0), rows.length - 1);
+	alterClass(selectCursor, 'cursor', false);
+	selectCursor = rows[index];
+	alterClass(selectCursor, 'cursor', true);
+	selectCursor.scrollIntoView({block: 'nearest'});
+	return false;
+}
+
+/** Open the edit form of the row under the keyboard cursor
+* @return {boolean} false if handled
+*/
+function selectRowEdit() {
+	if (!selectCursor) {
+		return;
+	}
+	const link = qs('a.edit', selectCursor);
+	if (link) {
+		location.href = link.href;
+	}
+	return false;
+}
+
+/** Toggle the checkbox of the row under the keyboard cursor
+* @return {boolean} false if handled
+*/
+function selectRowToggle() {
+	if (!selectCursor) {
+		return;
+	}
+	const checkbox = qs('input[type=checkbox]', selectCursor);
+	if (checkbox) {
+		checkbox.checked = !checkbox.checked;
+		fire(checkbox, 'click');
+	}
+	return false;
+}
+
+/** Go to the previous or next results page
+* @param {number} delta +1 or -1
+* @return {boolean} false if handled
+*/
+function selectPage(delta) {
+	const fieldset = qs('#pagination');
+	if (!fieldset) {
+		return;
+	}
+	const current = qs('b', fieldset);
+	const el = (delta > 0
+		? (current ? current.nextElementSibling : qs('a', fieldset))
+		: (current ? current.previousElementSibling : null)
+	);
+	if (el && el.matches('a')) {
+		location.href = el.href;
+	}
 	return false;
 }
 
@@ -927,7 +1069,7 @@ function shortcutKeydown(event) {
 		}
 		if (event.key == 'ArrowDown' || event.key == 'ArrowUp') {
 			if (shortcuts.results.length) {
-				shortcuts.active = (shortcuts.active + (event.key == 'ArrowDown' ? 1 : shortcuts.results.length - 1)) % shortcuts.results.length;
+				shortcuts.active = shortcutSkipHeaders(shortcuts.active, event.key == 'ArrowDown' ? 1 : -1);
 				shortcutResults();
 			}
 			return false;
@@ -952,6 +1094,24 @@ function shortcutKeydown(event) {
 				shortcutSequence = true;
 				shortcutSequenceTimer = setTimeout(shortcutSequenceClear, 1000);
 				return false;
+			}
+			if (key == 'j') {
+				return selectMove(1);
+			}
+			if (key == 'k') {
+				return selectMove(-1);
+			}
+			if (key == 'x') {
+				return selectRowToggle();
+			}
+			if (key == '[') {
+				return selectPage(-1);
+			}
+			if (key == ']') {
+				return selectPage(1);
+			}
+			if (event.key == 'Enter' && !event.target.closest('a, button')) {
+				return selectRowEdit();
 			}
 		} else if (shortcutSequence) {
 			shortcutSequenceClear();

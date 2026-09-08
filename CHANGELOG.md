@@ -1,4 +1,5 @@
 ## Adminer dev
+- Select: Navigate and edit rows with the keyboard (j/k, Enter, x) and turn pages with [ and ]
 - Verify all parts of the server name before connecting (GHSA-rwxg-xph9-82cj, regression from 5.5.1)
 - Do not drop the old check constraint when the new one cannot be created
 - Replace the whole last line by the ellipsis when shortening a multi-line text, e.g. a long SQL command

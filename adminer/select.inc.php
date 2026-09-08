@@ -589,7 +589,7 @@ if (!$columns && support("table")) {
 						? $page + ($rows ? (count($rows) >= $limit ? 2 : 1) : 0)
 						: floor(($found_rows - 1) / $limit)
 					);
-					echo "<fieldset><legend>" . lang('Page') . "</legend>";
+					echo "<fieldset id='pagination'><legend>" . lang('Page') . "</legend>";
 					if (!support("cursor")) {
 						echo pagination(0, $page) . ($page > 5 ? " …" : "");
 						for ($i = max(1, $page - 4); $i < min($max_page, $page + 5); $i++) {

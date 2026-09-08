@@ -40,13 +40,21 @@ function page_header(string $title, string $error = "", $breadcrumb = array(), s
 	);
 	$media = " media='(prefers-color-scheme: dark)'";
 	if ($dark !== false) {
-		echo "<link rel='stylesheet'" . ($dark ? "" : $media) . " href='" . DIR . "static/dark.css'>\n";
+		echo "<link rel='stylesheet'" . ($dark ? "" : " id='css-dark'" . $media) . " href='" . DIR . "static/dark.css'>\n";
 	}
 	echo "<meta name='color-scheme' content='" . ($dark === null ? "light dark" : ($dark ? "dark" : "light")) . "'>\n";
 
 	echo script_src(DIR . "static/functions.js");
 	if (defined('Adminer\DIR')) { // the compiled version merges editing.js into functions.js
 		echo script_src("static/editing.js");
+	}
+	if ($dark === null) { // only when both skins are available and no plugin forces one - apply a stored user override before the first paint
+		echo script("
+const theme = localStorage.getItem('adminer_theme');
+if (theme) {
+	setTheme(theme == 'dark');
+}
+");
 	}
 	if (adminer()->head($dark)) {
 		echo "<link rel='icon' href='data:image/gif;base64,"
@@ -82,6 +90,14 @@ const shortcutLabels = {
 	move: '" . js_escape(lang('Move between rows')) . "',
 	autocomplete: '" . js_escape(lang('SQL autocomplete')) . "',
 	close: '" . js_escape(lang('Close')) . "',
+	rowMove: '" . js_escape(lang('Move row cursor')) . "',
+	rowEdit: '" . js_escape(lang('Edit focused row')) . "',
+	rowCheck: '" . js_escape(lang('Toggle row checkbox')) . "',
+	pageNav: '" . js_escape(lang('Previous/next page')) . "',
+	theme: '" . js_escape(lang('Toggle dark/light theme')) . "',
+	groupCtrl: '" . js_escape(lang('Ctrl/Cmd combinations')) . "',
+	groupSequence: '" . js_escape(lang('g then a letter')) . "',
+	groupKey: '" . js_escape(lang('Single-key commands')) . "',
 };");
 	echo "<div id='help' class='jush-" . JUSH . " jsonly hidden'" . on('mouseover', 'helpKeep') . on('mouseout', 'helpMouseout') . "></div>\n";
 	echo "<div id='content'>\n";
