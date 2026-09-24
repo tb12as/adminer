@@ -93,6 +93,7 @@ const shortcutLabels = {
 	rowMove: '" . js_escape(lang('Move row cursor')) . "',
 	rowEdit: '" . js_escape(lang('Edit focused row')) . "',
 	rowCheck: '" . js_escape(lang('Toggle row checkbox')) . "',
+	rowEditChecked: '" . js_escape(lang('Edit checked rows')) . "',
 	pageNav: '" . js_escape(lang('Previous/next page')) . "',
 	theme: '" . js_escape(lang('Toggle dark/light theme')) . "',
 	groupCtrl: '" . js_escape(lang('Ctrl/Cmd combinations')) . "',

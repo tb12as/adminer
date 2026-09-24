@@ -740,7 +740,8 @@ function shortcutHint() {
 		links.push(
 			{label: 'j/k — ' + shortcutLabels.rowMove, action: shortcutHintNoop},
 			{label: 'Enter — ' + shortcutLabels.rowEdit, action: shortcutHintNoop},
-			{label: 'x — ' + shortcutLabels.rowCheck, action: shortcutHintNoop}
+			{label: 'x — ' + shortcutLabels.rowCheck, action: shortcutHintNoop},
+			{label: 'e — ' + shortcutLabels.rowEditChecked, action: shortcutHintNoop}
 		);
 	}
 	if (qs('#pagination')) {
@@ -1034,6 +1035,21 @@ function selectRowToggle() {
 	if (checkbox) {
 		checkbox.checked = !checkbox.checked;
 		fire(checkbox, 'click');
+	}
+	return false;
+}
+
+/** Open the edit form of the checked rows
+* @return {boolean} false if handled
+*/
+function selectCheckedEdit() {
+	const table = qs('#table');
+	if (!table || !qs('tbody input[type=checkbox]:checked', table)) {
+		return;
+	}
+	const button = qs('input[name="edit"]', table.closest('form'));
+	if (button) {
+		button.click();
 	}
 	return false;
 }
