@@ -1113,7 +1113,7 @@ function shortcutKeydown(event) {
 			return false;
 		}
 	} else {
-		const editable = event.target.closest && event.target.closest('input, textarea, select, [contenteditable]');
+		const editable = event.target.closest && event.target.closest('input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable]');
 		if (!editable && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
 			const key = event.key.toLowerCase();
 			if (shortcutSequence) {
@@ -1137,6 +1137,9 @@ function shortcutKeydown(event) {
 			}
 			if (key == 'x') {
 				return selectRowToggle();
+			}
+			if (key == 'e') {
+				return selectCheckedEdit();
 			}
 			if (key == '[') {
 				return selectPage(-1);
