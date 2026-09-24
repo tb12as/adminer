@@ -1052,13 +1052,16 @@ function selectRowToggle() {
 	return false;
 }
 
-/** Open the edit form of the checked rows
+/** Open the edit form of the checked rows, or of the row under the keyboard cursor if none is checked
 * @return {boolean} false if handled
 */
 function selectCheckedEdit() {
 	const table = qs('#table');
-	if (!table || !qs('tbody input[type=checkbox]:checked', table)) {
+	if (!table) {
 		return;
+	}
+	if (!qs('tbody input[type=checkbox]:checked', table)) {
+		return selectRowEdit();
 	}
 	const button = qs('input[name="edit"]', table.closest('form'));
 	if (button) {
