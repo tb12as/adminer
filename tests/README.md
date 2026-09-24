@@ -1,6 +1,7 @@
 # Tests
 
 The end-to-end tests in this directory connect to a database server of the tested driver, all of them using the database `adminer_test` - the screenshots and OpenSearch, which has no databases, are the exceptions.
+The [unit tests](#unit-tests) need nothing but the PHP CLI.
 
 ## Running
 
@@ -27,7 +28,7 @@ The tests expect Adminer at <http://localhost:8000> (or at `ADMINER_URL`), serve
 `display_errors` must be on, otherwise the tests never see the PHP errors they look for in the responses, and `file_uploads` must stay on (the default), otherwise the import tests find a disabled file field.
 The tests fill in the standard login form, so a plugin changing it breaks them - `AdminerLoginServers` for example replaces the server field by a list.
 
-The `native` and `pdo` projects run the same tests with both extensions of the driver, so PHP needs `mysqli` and `pdo_mysql`, `pgsql` and `pdo_pgsql`, `sqlite3` and `pdo_sqlite`, `sqlsrv` and `pdo_sqlsrv`.
+The `native` and `pdo` projects run the same tests with both extensions of the driver, so PHP needs `mysqli` and `pdo_mysql`, `pgsql` and `pdo_pgsql`, `sqlite3` and `pdo_sqlite`, `sqlsrv` and `pdo_sqlsrv`, `oci8` and `pdo_oci`.
 
 ## MySQL
 
@@ -87,6 +88,18 @@ ALTER ROLE db_owner ADD MEMBER ODBC;
 
 The password policy is disabled because `ODBC` doesn't satisfy it.
 
+## Oracle
+
+Oracle Database Express Edition listening on the default port, the tests type `localhost:1521/XEPDB1` in the server field - the service name of the pluggable database is a part of the Easy Connect syntax.
+A database is an Oracle schema, so the first test drops and recreates `adminer_test` through Adminer itself, which needs a user able to create and drop other users:
+
+```sql
+CREATE USER ODBC IDENTIFIED BY ODBC;
+GRANT DBA TO ODBC;
+```
+
+`DBA` is the counterpart of the privileges granted in the other drivers - it also covers the `V$` views read by the process list, the variables and the status.
+
 ## OpenSearch
 
 An OpenSearch server on the default `localhost:9200` without the security plugin, so that it needs no user and no certificate.
@@ -128,3 +141,12 @@ GRANT ALL PRIVILEGES ON adminer_demo.* TO 'adminer'@'localhost';
 ```
 
 No plugin may be deployed because it would show in the pictures.
+
+## Unit Tests
+
+The unit tests in `tests/unit/*.php` check the functions which need no database server:
+
+- `composer test` runs all of them.
+- `php tests/unit/url.php` runs a single one, they are standalone scripts requiring nothing but the PHP CLI.
+
+They print the errors found, so they print nothing and exit with 0 when everything is OK.

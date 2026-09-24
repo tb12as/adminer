@@ -16,7 +16,6 @@ if (isset($_GET["oracle"])) {
 	if (extension_loaded("oci8") && $_GET["ext"] != "pdo") {
 		class Db extends SqlDb {
 			public $extension = "oci8";
-			public $_current_db;
 			private $link;
 
 			function _error($errno, $error) {
@@ -42,8 +41,7 @@ if (isset($_GET["oracle"])) {
 			}
 
 			function select_db(string $database) {
-				$this->_current_db = $database;
-				return true;
+				return $this->query("ALTER SESSION SET CURRENT_SCHEMA = " . idf_escape($database));
 			}
 
 			function query(string $query, bool $unbuffered = false) {
@@ -116,15 +114,13 @@ if (isset($_GET["oracle"])) {
 	} elseif (extension_loaded("pdo_oci")) {
 		class Db extends PdoDb {
 			public $extension = "PDO_OCI";
-			public $_current_db;
 
 			function attach(array $server, string $username, string $password): string {
 				return $this->dsn("oci:dbname=//" . easy_connect($server) . ";charset=AL32UTF8", $username, $password);
 			}
 
 			function select_db(string $database) {
-				$this->_current_db = $database;
-				return true;
+				return $this->query("ALTER SESSION SET CURRENT_SCHEMA = " . idf_escape($database));
 			}
 		}
 
@@ -162,6 +158,7 @@ if (isset($_GET["oracle"])) {
 				lang('Date and time') => array("date" => 10, "timestamp" => 29, "interval year" => 12, "interval day" => 28), //! year(), day() to second()
 				lang('Strings') => array("char" => 2000, "varchar2" => 4000, "nchar" => 2000, "nvarchar2" => 4000, "clob" => 4294967295, "nclob" => 4294967295),
 				lang('Binary') => array("raw" => 2000, "long raw" => 2147483648, "blob" => 4294967295, "bfile" => 4294967296),
+				lang('Geometry') => array("sdo_geometry" => 0),
 			);
 		}
 
@@ -197,6 +194,23 @@ if (isset($_GET["oracle"])) {
 			return true;
 		}
 
+		function select(string $table, array $select, array $where, array $group, array $order = array(), int $limit = 1, ?int $page = 0, bool $print = false) {
+			// fetching a row with a raw object column fails (ORA-00932) so unlike in MySQL, the conversions appended next to * don't help - * must be expanded to convert the objects in SQL
+			if (in_array("*", $select)) {
+				$convert = array();
+				$found = false;
+				foreach (fields($table) as $name => $field) {
+					$as = convert_field($field);
+					$found = ($found || $as);
+					$convert[] = ($as ? "$as AS " : "") . idf_escape($name);
+				}
+				if ($found) {
+					$select = $convert; // also drops the appended conversions, their aliases would collide in the subquery added by limit()
+				}
+			}
+			return parent::select($table, $select, $where, $group, $order, $limit, $page, $print);
+		}
+
 		function allFields(): array {
 			$return = array();
 			$view = views_table("view_name");
@@ -204,7 +218,7 @@ if (isset($_GET["oracle"])) {
 	c.data_precision "precision", c.data_scale "scale", c.char_col_decl_length "char_length"
 FROM all_tab_columns c
 WHERE c.table_name IN (
-	SELECT table_name FROM all_tables WHERE tablespace_name = ' . q(DB) . where_owner(" AND ") . "
+	SELECT table_name FROM all_tables WHERE ' . where_owner('') . "
 	UNION SELECT view_name FROM $view
 )" . where_owner(" AND ", "c.owner") . '
 ORDER BY c.table_name, c.column_id', $this->conn);
@@ -230,13 +244,9 @@ ORDER BY c.table_name, c.column_id', $this->conn);
 	}
 
 	function get_databases(bool $flush): array {
-		return get_vals(
-			"SELECT DISTINCT tablespace_name FROM (
-SELECT tablespace_name FROM user_tablespaces
-UNION SELECT tablespace_name FROM all_tables WHERE tablespace_name IS NOT NULL
-)
-ORDER BY 1"
-		);
+		// oracle_maintained skips the internal schemas, the column is available since Oracle 12.1
+		$return = get_vals("SELECT username FROM all_users WHERE oracle_maintained = 'N' ORDER BY 1");
+		return ($return ?: get_vals("SELECT username FROM all_users ORDER BY 1"));
 	}
 
 	function limit(string $query, string $where, int $limit, int $offset = 0, string $separator = " "): string {
@@ -251,45 +261,34 @@ ORDER BY 1"
 	}
 
 	function db_collation(string $db, array $collations): string {
-		return get_val("SELECT value FROM nls_database_parameters WHERE parameter = 'NLS_CHARACTERSET'"); //! respect $db
+		return get_val("SELECT value FROM nls_database_parameters WHERE parameter = 'NLS_CHARACTERSET'"); // the character set is common to all schemas
 	}
 
 	function logged_user(): string {
 		return get_val("SELECT USER FROM DUAL");
 	}
 
-	function get_current_db(): string {
-		$db = connection()->_current_db ?: DB;
-		connection()->_current_db = null;
-		return $db;
-	}
-
 	function where_owner(string $prefix, string $owner = "owner"): string {
-		if (!$_GET["ns"]) {
-			return '';
-		}
-		return "$prefix$owner = sys_context('USERENV', 'CURRENT_SCHEMA')";
+		return "$prefix$owner = " . q(DB); // an empty DB matches no object
 	}
 
 	function views_table(string $columns): string {
-		$owner = where_owner('');
-		return "(SELECT $columns FROM all_views WHERE " . ($owner ?: "rownum < 0") . ")";
+		return "(SELECT $columns FROM all_views WHERE " . where_owner('') . ")";
 	}
 
 	function tables_list(): array {
 		$view = views_table("view_name");
-		$owner = where_owner(" AND ");
 		return get_key_vals(
-			"SELECT table_name, 'table' FROM all_tables WHERE tablespace_name = " . q(DB) . "$owner
+			"SELECT table_name, 'table' FROM all_tables WHERE " . where_owner('') . "
 UNION SELECT view_name, 'view' FROM $view
 ORDER BY 1"
-		); //! views don't have schema
+		);
 	}
 
 	function count_tables(array $databases): array {
 		$return = array();
 		foreach ($databases as $db) {
-			$return[$db] = get_val("SELECT COUNT(*) FROM all_tables WHERE tablespace_name = " . q($db));
+			$return[$db] = get_val("SELECT COUNT(*) FROM all_tables WHERE owner = " . q($db));
 		}
 		return $return;
 	}
@@ -297,9 +296,8 @@ ORDER BY 1"
 	function table_status(string $name = "", bool $fast = false): array {
 		$return = array();
 		$search = q($name);
-		$db = get_current_db();
 		$view = views_table("view_name");
-		$owner = where_owner(" AND ", "t.owner");
+		$owner = where_owner('', "t.owner");
 		foreach (
 			// sizes are available only for segments of the current user
 			get_rows('SELECT t.table_name "Name", \'table\' "Engine", s.bytes "Data_length", i.bytes "Index_length", t.num_rows "Rows"
@@ -307,7 +305,7 @@ FROM all_tables t
 LEFT JOIN (SELECT segment_name, SUM(bytes) bytes FROM user_segments WHERE segment_type LIKE \'TABLE%\' GROUP BY segment_name) s ON s.segment_name = t.table_name
 LEFT JOIN (SELECT i.table_name, SUM(s.bytes) bytes FROM user_indexes i
 	JOIN user_segments s ON s.segment_name = i.index_name AND s.segment_type LIKE \'INDEX%\' GROUP BY i.table_name) i ON i.table_name = t.table_name
-WHERE t.tablespace_name = ' . q($db) . $owner . ($name != "" ? " AND t.table_name = $search" : "") . "
+WHERE ' . $owner . ($name != "" ? " AND t.table_name = $search" : "") . "
 UNION SELECT view_name, 'view', 0, 0, 0 FROM $view" . ($name != "" ? " WHERE view_name = $search" : "") . "
 ORDER BY 1") as $row
 		) {
@@ -333,6 +331,13 @@ ORDER BY 1") as $row
 			if ($length == ",") {
 				$length = $row["CHAR_COL_DECL_LENGTH"];
 			} //! int
+			$default = $row["DATA_DEFAULT"];
+			if ($default !== null) {
+				$default = rtrim($default); // Oracle pads the default by a space
+				if (preg_match("~^'(.*)'\$~s", $default, $match)) {
+					$default = str_replace("''", "'", $match[1]); // a string is stored as a quoted literal
+				}
+			}
 			$privileges = array("insert" => 1, "select" => 1, "update" => 1, "order" => 1);
 			if ($row["DATA_TYPE_OWNER"] == "" || $type == "XMLTYPE") { // an object type, e.g. SDO_GEOMETRY, can't be compared with a string
 				$privileges["where"] = 1;
@@ -342,7 +347,7 @@ ORDER BY 1") as $row
 				"full_type" => $type . ($length ? "($length)" : ""),
 				"type" => strtolower($type),
 				"length" => $length,
-				"default" => $row["DATA_DEFAULT"],
+				"default" => $default,
 				"null" => ($row["NULLABLE"] == "Y"),
 				//! "auto_increment" => false,
 				//! "collation" => $row["CHARACTER_SET_NAME"],
@@ -387,8 +392,7 @@ ORDER BY ac.constraint_type, aic.column_position", $connection2) as $row
 	}
 
 	function information_schema(string $db, string $schema = ""): bool {
-		//! SYS and SYSTEM are read-only too but get_schema() returns the session user
-		return ($schema != "" ? $schema : get_schema()) == "INFORMATION_SCHEMA";
+		return ($schema != "" ? $schema : $db) == "INFORMATION_SCHEMA"; //! SYS and SYSTEM are read-only too
 	}
 
 	function error(): string {
@@ -423,6 +427,7 @@ ORDER BY ac.constraint_type, aic.column_position", $connection2) as $row
 				}
 			}
 			if ($val) {
+				list($val[2], $val[3]) = array($val[3], $val[2]); // Oracle expects DEFAULT before NOT NULL
 				$alter[] = ($table != "" ? ($field[0] != "" ? "MODIFY (" : "ADD (") : "  ") . implode($val) . ($table != "" ? ")" : ""); //! error with name change only
 			} else {
 				$drop[] = idf_escape($field[0]);
@@ -491,6 +496,37 @@ AND c_src.TABLE_NAME = " . q($table);
 		return $return;
 	}
 
+	function trigger(string $name, string $table): array {
+		if ($name == "") {
+			return array();
+		}
+		$rows = get_rows('SELECT trigger_name "Trigger", trigger_type "Type", triggering_event "Event", trigger_body "Statement"
+FROM all_triggers WHERE trigger_name = ' . q($name) . where_owner(" AND "));
+		$return = reset($rows);
+		if ($return) {
+			$type = $return["Type"]; // e.g. 'BEFORE STATEMENT', 'AFTER EACH ROW', 'INSTEAD OF', 'COMPOUND'
+			$return["Timing"] = (preg_match('~^(BEFORE|AFTER|INSTEAD OF)~', $type, $match) ? $match[1] : $type);
+			$return["Type"] = (preg_match('~EACH ROW~', $type) || $type == "INSTEAD OF" ? "FOR EACH ROW" : "");
+		}
+		return ($return ?: array());
+	}
+
+	function triggers(string $table): array {
+		$return = array();
+		foreach (get_rows("SELECT trigger_name, trigger_type, triggering_event FROM all_triggers WHERE table_name = " . q($table) . where_owner(" AND ")) as $row) {
+			$return[$row["TRIGGER_NAME"]] = array(preg_replace('~ (STATEMENT|EACH ROW)$~', '', $row["TRIGGER_TYPE"]), $row["TRIGGERING_EVENT"]);
+		}
+		return $return;
+	}
+
+	function trigger_options(): array {
+		return array(
+			"Timing" => array("BEFORE", "AFTER", "INSTEAD OF"),
+			"Event" => array("INSERT", "UPDATE", "DELETE", "INSERT OR UPDATE", "INSERT OR DELETE", "UPDATE OR DELETE", "INSERT OR UPDATE OR DELETE"), //! UPDATE OF columns
+			"Type" => array("FOR EACH ROW", ""), // a statement level trigger has no clause
+		);
+	}
+
 	function truncate_tables(array $tables): bool {
 		return apply_queries("TRUNCATE TABLE", $tables);
 	}
@@ -507,17 +543,22 @@ AND c_src.TABLE_NAME = " . q($table);
 		return "0"; //!
 	}
 
-	function schemas(): array {
-		$return = get_vals("SELECT DISTINCT owner FROM dba_segments WHERE owner IN (SELECT username FROM dba_users WHERE default_tablespace NOT IN ('SYSTEM','SYSAUX')) ORDER BY 1");
-		return ($return ?: get_vals("SELECT DISTINCT owner FROM all_tables WHERE tablespace_name = " . q(DB) . " ORDER BY 1"));
+	function create_database(string $db, string $collation) {
+		// a schema-only account, available since Oracle 18c; the quota is charged to the owner so the new schema needs it
+		$return = queries("CREATE USER " . idf_escape($db) . " NO AUTHENTICATION");
+		return ($return ? queries("GRANT UNLIMITED TABLESPACE TO " . idf_escape($db)) : $return);
 	}
 
-	function get_schema(): string {
-		return get_val("SELECT sys_context('USERENV', 'SESSION_USER') FROM dual");
+	function drop_databases(array $databases): bool {
+		$return = true;
+		foreach ($databases as $db) {
+			$return = !!queries("DROP USER " . idf_escape($db) . " CASCADE") && $return;
+		}
+		return $return;
 	}
 
-	function set_schema(string $schema, ?Db $connection2 = null): bool {
-		return !!connection($connection2)->query("ALTER SESSION SET CURRENT_SCHEMA = " . idf_escape($schema));
+	function rename_database(string $name, string $collation): bool {
+		return !!queries("ALTER USER " . idf_escape(DB) . " RENAME TO " . idf_escape($name)); // Oracle reports ORA-03001: unimplemented feature
 	}
 
 	function show_variables(): array {
@@ -552,13 +593,16 @@ ORDER BY PROCESS
 	}
 
 	function convert_field(array $field) {
+		if ($field["type"] == "sdo_geometry") {
+			return "SDO_UTIL.TO_WKTGEOMETRY(" . idf_escape($field["field"]) . ")";
+		}
 	}
 
 	function unconvert_field(array $field, string $return): string {
-		return $return;
+		return ($field["type"] == "sdo_geometry" ? "SDO_UTIL.FROM_WKTGEOMETRY($return)" : $return);
 	}
 
 	function support(string $feature): bool {
-		return preg_match('~^(columns|database|drop_col|fast_status|indexes|descidx|processlist|scheme|sql|status|table|variables|view)$~', $feature); //!
+		return preg_match('~^(columns|database|drop_col|fast_status|indexes|descidx|processlist|sql|status|table|trigger|variables|view|view_trigger)$~', $feature); //!
 	}
 }

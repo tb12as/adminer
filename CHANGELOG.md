@@ -1,8 +1,21 @@
 ## Adminer dev
 - Select: Navigate and edit rows with the keyboard (j/k, Enter, x, e) and turn pages with [ and ]
+- Oracle: Use schemas as databases instead of tablespaces (bug SF-204, SF-212, SF-238)
+- Oracle: Create and drop databases (bug SF-246)
+- Oracle: Display, create, alter and drop triggers (bug SF-385)
+- Oracle: Display and edit geometries as well-known text instead of empty (bug SF-610, SF-615)
+- Oracle: Fix creating a column with a default value
+- Oracle: Fix the default value displayed with the quotes around it
+### Internal
+- Test Oracle
+- Distribute the tests in the release archive (bug #1332)
+
+## Adminer 6.0.2 (released 2026-09-07)
 - Verify all parts of the server name before connecting (GHSA-rwxg-xph9-82cj, regression from 5.5.1)
+- Sanitize the connection id returned by the server (GHSA-7c5h-q78c-fpxx, XSS)
 - Do not drop the old check constraint when the new one cannot be created
 - Replace the whole last line by the ellipsis when shortening a multi-line text, e.g. a long SQL command
+- Format numbers according to the conventions of the used language
 - Alter routine: Preserve all characteristics and edit them in a form instead of in the definition
 - Autocomplete: Get the columns of the database faster (bug #1328)
 - Autocomplete: Offer also in the definition of a routine, an event and a view
@@ -29,6 +42,7 @@
 - Oracle: Link the documentation of the used version
 - ClickHouse: Print only errors from ClickHouse (GHSA-77qq-q8fv-x45v, regression from 6.0.0)
 - ClickHouse: Highlight the queries
+- Elasticsearch: Print only errors from Elasticsearch (GHSA-q8h3-4cx4-prgm, regression from 4.16.0)
 - Firebird: Highlight the queries
 - ClickHouse, IGDB, Redis, SimpleDB: Fix loading the driver in the compiled Adminer (bug #1325)
 - Elasticsearch, Firebird, IGDB, IMAP, MongoDB, Redis, SimpleDB: Fix a fatal error on the pages calling a function missing in the driver
@@ -619,7 +633,7 @@
 - PostgreSQL 8+: Fix exporting table constraints
 - SQLite: Show all supported pragmas in Variables
 - MS SQL: Allow altering table in non-default schema (bug SF-405)
-- MS SQL: Fix default values (bug SF-732, bug SF-733)
+- MS SQL: Fix default values (bug SF-732, SF-733)
 - MS SQL: Fix length of nvarchar columns
 - Editor PDO: Select value of foreign key in edit (bug SF-847)
 - Mobile devices: Use device width
@@ -833,7 +847,7 @@
 - Make maxlength in all fields a soft limit
 - Make tables horizontally scrollable
 - MySQL: Support foreign keys created with ANSI quotes (bug SF-620)
-- MySQL: Recognize ON UPDATE current_timestamp() (bug SF-632, bug SF-638)
+- MySQL: Recognize ON UPDATE current_timestamp() (bug SF-632, SF-638)
 - MySQL: Descending indexes in MySQL 8 (bug SF-643)
 - PostgreSQL: Quote array values in export (bug SF-621)
 - PostgreSQL: Export DESC indexes (bug SF-639)
