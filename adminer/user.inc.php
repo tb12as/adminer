@@ -41,7 +41,9 @@ if ($_POST) {
 $grants = array();
 
 //! use information_schema for MySQL 5 - column names in column privileges are not escaped
-if (isset($_GET["host"]) && ($result = connection()->query("SHOW GRANTS FOR " . q($USER) . "@" . q($_GET["host"])))) {
+$result = (isset($_GET["host"]) ? connection()->query("SHOW GRANTS FOR " . q($USER) . "@" . q($_GET["host"])) : null);
+$not_found = (isset($_GET["host"]) && !$result); // the user doesn't exist
+if ($result) {
 	while ($row = $result->fetch_row()) {
 		if (preg_match('~GRANT (.*) ON (.*) TO ~', $row[0], $match) && preg_match_all('~ *([^(,]*[^ ,(])( *\([^)]+\))?~', $match[1], $matches, PREG_SET_ORDER)) { //! escape the part between ON and TO
 			foreach ($matches as $val) {
@@ -124,7 +126,14 @@ if ($_POST && !$error) {
 	}
 }
 
-page_header((isset($_GET["host"]) ? lang('Username') . ": " . h("$USER@$_GET[host]") : lang('Create user')), $error, array("privileges" => array('', lang('Privileges'))));
+page_header(
+	(isset($_GET["host"]) ? lang('Username') . ": " . h("$USER@$_GET[host]") : lang('Create user')),
+	$error,
+	array("privileges" => array('', lang('Privileges'))),
+	"",
+	$not_found,
+	doc_link(array('sql' => "grant.html", 'mariadb' => "grant")) // grant/ redirects to a search
+);
 
 $row = $_POST;
 if ($row) {
@@ -147,7 +156,7 @@ if ($row) {
 <?php
 //! MAX_* limits, REQUIRE
 echo "<table class='odds'>\n";
-echo "<thead><tr><th colspan='2'>" . lang('Privileges') . doc_link(array('sql' => "grant.html#priv_level"));
+echo "<thead><tr><th colspan='2'>" . lang('Privileges');
 $i = 0;
 foreach ($grants as $object => $grant) {
 	echo '<th>' . ($object != "*.*"

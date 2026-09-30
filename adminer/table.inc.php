@@ -4,16 +4,19 @@ namespace Adminer;
 $TABLE = $_GET["table"];
 $fields = fields($TABLE);
 if (!$fields) {
-	$error = adminer()->error() ?: lang('No tables.');
+	$error = adminer()->error();
 }
 $table_status = table_status1($TABLE);
 $name = adminer()->tableName($table_status);
 $error = $error ?: h($table_status["Error"]); // the servers return an error instead of the comment of a table which cannot be opened
 
 page_header(
-	($fields && is_view($table_status) ? $table_status['Engine'] == 'materialized view' ? lang('Materialized view') : lang('View') : lang('Table'))
-		. ": " . ($name != "" ? $name : h($TABLE)),
-	$error
+	($fields && is_view($table_status) ? $table_status['Engine'] == 'materialized view' ? lang('Materialized view') : lang('View') : lang('Table')) . ": " . ($name != "" ? $name : h($TABLE)),
+	$error,
+	array(),
+	"",
+	!$fields,
+	($fields ? doc_link(array(JUSH => driver()->tableHelp($TABLE, is_view($table_status)))) : "")
 );
 
 $rights = array();
@@ -37,7 +40,7 @@ if ($fields) {
 function tables_links(array $tables): void {
 	echo "<ul>\n";
 	foreach ($tables as $row) {
-		$link = preg_replace('~ns=[^&]*~', "ns=" . url_escape($row["ns"]), ME);
+		$link = preg_replace('~&ns=[^&]*~', "&ns=" . url_escape($row["ns"]), ME);
 		echo "<li><a href='" . h($link . "table=" . url_escape($row["table"])) . "'>" . ($row["ns"] != $_GET["ns"] ? "<b>" . h($row["ns"]) . "</b>." : "") . h($row["table"]) . "</a>";
 	}
 	echo "</ul>\n";
@@ -69,13 +72,13 @@ if (!is_view($table_status) && driver()->supportsAlterTable($table_status)) {
 		$foreign_keys = foreign_keys($TABLE);
 		if ($foreign_keys) {
 			echo "<table>\n";
-			echo "<thead><tr><th>" . lang('Source') . "<td>" . lang('Target') . "<td>" . lang('ON DELETE') . "<td>" . lang('ON UPDATE') . "<td class='hover'><tbody>\n";
+			echo "<thead><tr><th>" . lang('Source') . "<th>" . lang('Target') . "<th>" . lang('ON DELETE') . "<th>" . lang('ON UPDATE') . "<td class='hover'><tbody>\n";
 			foreach ($foreign_keys as $name => $foreign_key) {
 				echo "<tr title='" . h($name) . "'>";
 				echo "<th><i>" . implode("</i>, <i>", array_map('Adminer\h', $foreign_key["source"])) . "</i>";
 				$link = ($foreign_key["db"] != ""
-					? preg_replace('~db=[^&]*~', "db=" . url_escape($foreign_key["db"]), ME)
-					: ($foreign_key["ns"] != "" ? preg_replace('~ns=[^&]*~', "ns=" . url_escape($foreign_key["ns"]), ME) : ME)
+					? preg_replace('~&db=[^&]*~', "&db=" . url_escape($foreign_key["db"]), ME)
+					: ($foreign_key["ns"] != "" ? preg_replace('~&ns=[^&]*~', "&ns=" . url_escape($foreign_key["ns"]), ME) : ME)
 				);
 				echo "<td><a href='" . h($link . "table=" . url_escape($foreign_key["table"])) . "'>"
 					. ($foreign_key["db"] != "" && $foreign_key["db"] != DB ? "<b>" . h($foreign_key["db"]) . "</b>." : "")
@@ -122,7 +125,13 @@ if (support(is_view($table_status) ? "view_trigger" : "trigger") && driver()->su
 		echo "<table>\n";
 		foreach ($triggers as $key => $val) {
 			echo "<tr valign='top'><td>" . h($val[0]) . "<td>" . h($val[1]) . "<th>" . h($key)
-				. "<td class='hover'><a href='" . h(ME . 'trigger=' . url_escape($TABLE) . '&name=' . url_escape($key)) . "'>" . lang('Alter') . "</a>\n";
+				. "<td class='hover'><a href='" . h(ME . 'trigger=' . url_escape($TABLE) . '&name=' . url_escape($key)) . "'>" . lang('Alter') . "</a>";
+			$routine = $val[2];
+			if ($routine) { // PostgreSQL triggers only call a function which is what users usually want to alter
+				$routine_link = preg_replace('~&ns=[^&]*~', "&ns=" . url_escape($routine["ns"]), ME) . 'function=' . url_escape($routine["function"]) . '&name=' . url_escape($routine["name"]);
+				echo ", <a href='" . h($routine_link) . "' title='" . h($routine["name"]) . "'>" . lang('Alter function') . "</a>";
+			}
+			echo "\n";
 		}
 		echo "</table>\n";
 	}

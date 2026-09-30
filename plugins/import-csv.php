@@ -367,9 +367,6 @@ class AdminerImportCsv extends Adminer\Plugin {
 	}
 
 	protected $translations = array(
-		'en' => array(
-			'%d row(s) have been imported.' => array('%d row has been imported.', '%d rows have been imported.'),
-		),
 		'cs' => array(
 			'' => 'Vytvoření tabulky z nahraného CSV souboru',
 			'If the table exists' => 'Pokud tabulka existuje',
@@ -381,6 +378,36 @@ class AdminerImportCsv extends Adminer\Plugin {
 			'Column %s does not exist.' => 'Sloupec %s neexistuje.',
 			'Table has been created.' => 'Tabulka byla vytvořena.',
 			'%d row(s) have been imported.' => array('Byl importován %d záznam.', 'Byly importovány %d záznamy.', 'Bylo importováno %d záznamů.'),
+		),
+		'de' => array(
+			'' => 'Erstellt eine Tabelle aus einer importierten CSV-Datei', // Claude Opus 5
+		),
+		'en' => array(
+			'%d row(s) have been imported.' => array('%d row has been imported.', '%d rows have been imported.'),
+		),
+		'ja' => array(
+			'' => 'インポートした CSV ファイルからテーブルを作成', // Claude Opus 5
+		),
+		'pl' => array(
+			'' => 'Tworzy tabelę z zaimportowanego pliku CSV', // Claude Opus 5
+		),
+		'ro' => array(
+			'' => 'Creează un tabel dintr-un fișier CSV importat', // Claude Opus 5
+		),
+		'sk' => array(
+			'' => 'Vytvorenie tabuľky z nahraného CSV súboru', // Claude Opus 5
+		),
+		'zh' => array(
+			'' => '从导入的 CSV 文件创建表', // Claude Opus 5
+			'If the table exists' => '如果表已存在', // Claude Opus 5
+			'Insert' => '插入', // Claude Opus 5
+			'Truncate' => '清空', // Claude Opus 5
+			'Drop' => '删除', // Claude Opus 5
+			'Import' => '导入', // Claude Opus 5
+			'File must be in UTF-8 encoding.' => '文件必须使用UTF-8编码。', // Claude Opus 5
+			'%d row(s) have been imported.' => '%d 行已导入。', // Claude Opus 5
+			'Column %s does not exist.' => '列 %s 不存在。', // Claude Opus 5
+			'Table has been created.' => '已创建表。', // Claude Opus 5
 		),
 	);
 }

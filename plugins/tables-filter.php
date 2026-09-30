@@ -79,18 +79,25 @@ sessionStorage && document.addEventListener('DOMContentLoaded', () => {
 		'de' => array(
 			'' => 'Filtern Sie Namen in der Tabellenliste',
 		),
-		'pl' => array(
-			'' => 'Filtruj nazwy na liście tabel',
-		),
-		'ro' => array(
-			'' => 'Nume de filtre în lista de tabele',
+		'hr' => array(
+			'' => 'Filtriranje tablice prema imenu',
+			'Filter' => 'Filtar',
 		),
 		'ja' => array(
 			'' => 'テーブル一覧をテーブル名でフィルタリング',
 		),
-		'hr' => array(
-			'' => 'Filtriranje tablice prema imenu',
-			'Filter' => 'Filtar',
+		'pl' => array(
+			'' => 'Filtruj nazwy na liście tabel',
+		),
+		'ro' => array(
+			'' => 'Filtrează numele în lista de tabele', // Claude Opus 5
+		),
+		'sk' => array(
+			'' => 'Filtruje názvy v zozname tabuliek', // Claude Opus 5
+		),
+		'zh' => array(
+			'' => '过滤表列表中的名称', // Claude Opus 5
+			'Filter' => '过滤', // Claude Opus 5
 		),
 	);
 }

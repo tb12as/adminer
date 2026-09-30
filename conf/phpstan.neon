@@ -37,9 +37,13 @@ parameters:
 		# not real problems
 		- identifier: include.fileNotFound # includes in include/ relative from index.php
 		- "~^Function (set_magic_quotes_runtime|mysql_)~" # PHP < 7 functions
+		- "~^Call to function method_exists\\(\\) with SQLite3 and 'setAuthorizer'~" # PHP 8.0+
 		-
 			identifier: booleanAnd.rightAlwaysFalse # function_exists() of the PHP < 7 functions
 			path: ../adminer/include/bootstrap.inc.php
+		-
+			identifier: booleanAnd.alwaysFalse # PHP_VERSION_ID < 70100
+			path: ../adminer/include/pdo.inc.php
 		- "~an unknown class OCI-?Lob~" # this looks like PHPStan bug
 		- "~^Variable \\$error might not be defined~" # declared in bootstrap.inc.php
 		- "~^Constant LANG not found~" # defined in lang.inc.php
@@ -58,9 +62,6 @@ parameters:
 		- "~fread expects int<1, max>, 100000~" # 1e6
 		- "~'strlen' given~" # used as a bool callback
 		- "~between int<70100~" # PHP_VERSION_ID check
-		-
-			message: "~implode expects array, string given~" # pg_last_notice() returns array with PGSQL_NOTICE_ALL
-			path: ../adminer/drivers/pgsql.inc.php
 		-
 			message: "~ type specified~" # duplicate functions and methods, the doc-comments with array types are in adminer/
 			paths:
@@ -98,7 +99,6 @@ parameters:
 		max: 80499
 
 	dynamicConstantNames:
-		- Adminer\VERSION # the value changes with every release so the -dev check in file.inc.php must stay undecided
 		- SID # empty when the session ID is in a cookie
 
 	# The strict rules which are not used, with the number of places they report (measured 2026-08-09):
@@ -115,7 +115,7 @@ parameters:
 
 	typeAliases:
 		Server: "array{scheme:string, host:string, port:string, socket:string, path:string}"
-		TableStatus: "array{Name:string, Engine?:?string, Comment?:string, Error?:string, Oid?:numeric-string, Rows?:?numeric-string, Collation?:string, Auto_increment?:?numeric-string, Data_length?:numeric-string, Index_length?:numeric-string, Data_free?:numeric-string, Create_options?:string, dependent?:numeric-string, nspname?:string}"
+		TableStatus: "array{Name:string, Engine?:?string, Comment?:string, Error?:string, Oid?:numeric-string, Rows?:?numeric-string, Collation?:string, Auto_increment?:?numeric-string, Data_length?:numeric-string, Index_length?:numeric-string, Data_free?:numeric-string, Create_options?:string, dependent?:numeric-string}"
 		Field: "array{field?:string, full_type:string, type:string, length?:?numeric-string, unsigned?:string, default?:string, null:bool, auto_increment:bool, collation?:string, privileges:int[], comment?:string, primary?:bool, generated?:string, composite?:bool, orig?:string, on_update?:string, on_delete?:string, default_constraint?: string}"
 		FieldType: "array{type:string, length:numeric-string, unsigned:string, collation:string}" # subset of RoutineField and Field
 		RoutineField: "array{field:string, type:string, length:numeric-string, unsigned:string, null:bool, full_type:string, collation:string, inout?:string}"
@@ -125,3 +125,4 @@ parameters:
 		Routine: "array{name?:string, fields:list<RoutineField>, comment:string, returns?:FieldType, definition:string, language?:string, options?:array<string, string>}"
 		Partitions: "array{partition_by?:string, partition?:string, partitions?:numeric-string, partition_names?:list<string>, partition_values?:list<string>}"
 		BackwardKey: "array{name:string, keys:string[][]}"
+		ResultField: "stdClass&object{name:string, native_type?:string, table?:string, orgtable?:string, orgname?:string, db?:string}"

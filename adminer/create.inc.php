@@ -34,12 +34,11 @@ foreach ($referencable_primary as $table_name => $field) {
 
 $orig_fields = array();
 $table_status = array();
+$not_found = false;
 if ($TABLE != "") {
 	$orig_fields = fields($TABLE);
 	$table_status = table_status1($TABLE);
-	if (count($table_status) < 2) { // there's only the Name field
-		$error = lang('No tables.');
-	}
+	$not_found = (count($table_status) < 2); // there's only the Name field
 }
 $alterable = ($TABLE == "" || driver()->supportsAlterTable($table_status)); // e.g. a virtual table can be only renamed and dropped
 
@@ -85,7 +84,7 @@ if ($_POST && !process_fields($row["fields"]) && !$error) {
 						'source' => array($field["field"]),
 						'target' => array($type_field["field"]),
 						'on_delete' => $field["on_delete"],
-					));
+					), object_name("FOREIGN", trim($row["name"]), array($field["field"])));
 				}
 				$after = " AFTER " . idf_escape($field["field"]);
 			} elseif ($field["orig"] != "") {
@@ -149,7 +148,16 @@ if ($_POST && !process_fields($row["fields"]) && !$error) {
 	}
 }
 
-page_header(($TABLE != "" ? lang('Alter table') : lang('Create table')), $error, array("table" => $TABLE), h($TABLE));
+$statement = ($TABLE != "" ? "alter" : "create");
+page_header(($TABLE != "" ? lang('Alter table') : lang('Create table')), $error, array("table" => $TABLE), h($TABLE), $not_found, doc_link(array(
+	'sql' => "$statement-table.html",
+	'mariadb' => ($TABLE != "" ? "$statement-table" : ""), // alter-table/ redirects to a search
+	'pgsql' => "sql-$statement" . "table.html",
+	'cockroach' => "$statement-table",
+	'mssql' => "t-sql/statements/$statement-table-transact-sql",
+	'sqlite' => "lang_{$statement}table.html",
+	'oracle' => "sqlrf/" . strtoupper($statement) . "-TABLE.html",
+)));
 
 if (!$_POST) {
 	$types = driver()->types();
@@ -224,7 +232,7 @@ if (support("columns") && $alterable) {
 	echo script("editFields();");
 	echo "</div>\n<p>\n";
 	echo lang('Auto Increment') . ": <input type='number' name='Auto_increment' class='size' value='" . h($row["Auto_increment"]) . "'>\n";
-	echo checkbox("defaults", 1, ($_POST ? $_POST["defaults"] : get_setting("defaults")), lang('Default values'), on('click', 'columnShowClick', 5), "jsonly");
+	echo checkbox("defaults", 1, ($_POST ? $_POST["defaults"] : get_setting("defaults")), lang('Default values'), on('click', 'columnShowClick', 6), "jsonly");
 	$comments = ($_POST ? $_POST["comments"] : get_setting("comments"));
 	if (support("comment")) {
 		echo checkbox("comments", 1, $comments, lang('Comment'), on('click', 'editingCommentsClick', true), "jsonly") . ' ';

@@ -24,6 +24,8 @@ function syntaxHighlighting(version, vendor) {
 					;
 					if (vendor != 'cockroach') {
 						obj[key] = obj[key].replace('/docs/current', '/docs/' + version); // PostgreSQL
+					} else if (obj == jush.urls.pgsql) { // jush.link_key.pgsql resolves the CockroachDB pages, the variables and extensions stay at PostgreSQL
+						obj[key] = 'https://docs.cockroachlabs.com/docs/v' + version + '/$key';
 					}
 					if (/^\d\d$/.test(version)) { // the version of another system would make up a directory Oracle doesn't have
 						obj[key] = obj[key].replace('/oracle-database/19/', '/oracle-database/' + version + '/');
@@ -555,7 +557,7 @@ function editingLengthBlur() {
 */
 function columnShow(checked, column) {
 	for (const tr of qsa('tr', qs('#edit-fields'))) {
-		alterClass(qsa('td', tr)[column], 'hidden', !checked);
+		alterClass(tr.cells[column], 'hidden', !checked);
 	}
 }
 
@@ -612,7 +614,7 @@ function partitionNameChange() {
 */
 function editingCommentsClick(focus) {
 	const comment = this.form['Comment'];
-	columnShow(this.checked, 6);
+	columnShow(this.checked, 7);
 	alterClass(comment, 'hidden', !this.checked);
 	if (focus && this.checked) {
 		comment.focus();
@@ -660,8 +662,7 @@ function foreignAddRow() {
 */
 function indexesAddRow() {
 	const tr = this.closest('tr');
-	const row = cloneNode(tr); // the clone keeps the attribute so that it adds the next row
-	this.removeAttribute('data-onchange');
+	const row = cloneNode(tr);
 	for (const tag of qsa('select, input, button', row)) {
 		tag.name = tag.name.replace(/\[\d+/, '$&1'); // indexes[$j] and drop_col[$j]
 		if (tag.matches('select')) {
@@ -673,16 +674,42 @@ function indexesAddRow() {
 	tr.parentNode.append(row);
 }
 
-/** Change column in index, the last column also adds the next one
-* @param {string} prefix
+/** Get the name of an index from its columns
+* @param {HTMLTableRowElement} tr
+* @param {string} pattern Adminer::namePattern() with the table
+* @return {string}
+*/
+function indexesName(tr, pattern) {
+	const names = [...qsa('select, input', tr)].filter(column => /\[columns]/.test(column.name)).map(column => selectValue(column)).filter(value => value);
+	return pattern.replace('{columns}', () => names.join('_')); // function - column names can contain $&
+}
+
+/** Change index type, the last row also adds the next one
+* @param {Object<string, string>} namePatterns type => Adminer::namePattern() with the table
 * @this HTMLSelectElement
 */
-function indexesChangeColumn(prefix) {
+function indexesChangeType(namePatterns) {
+	const tr = this.closest('tr');
+	if (!tr.nextElementSibling) {
+		indexesAddRow.call(this);
+	}
+	const name = this.form[this.name.replace(/].*/, '][name]')];
+	const pattern = namePatterns[selectValue(this)];
+	if (pattern !== undefined && Object.keys(namePatterns).some(type => name.value == indexesName(tr, namePatterns[type]))) { // don't overwrite a name typed by the user
+		name.value = indexesName(tr, pattern);
+	}
+}
+
+/** Change column in index, the last column also adds the next one
+* @param {Object<string, string>} namePatterns type => Adminer::namePattern() with the table
+* @this HTMLSelectElement
+*/
+function indexesChangeColumn(namePatterns) {
 	const field = this;
 	const td = field.closest('td');
 	const columns = [...qsa('select, input', td)].filter(column => /\[columns]/.test(column.name));
+	const type = field.form[field.name.replace(/].*/, '][type]')];
 	if (columns[columns.length - 1] == field) { // the appended column becomes the last one so it adds the next
-		const type = field.form[field.name.replace(/].*/, '][type]')];
 		if (!type.selectedIndex) {
 			while (selectValue(type) != "INDEX" && type.selectedIndex < type.options.length) {
 				type.selectedIndex++;
@@ -702,14 +729,7 @@ function indexesChangeColumn(prefix) {
 		}
 		td.append(column);
 	}
-	const names = [];
-	for (const column of columns) { // the appended column is empty so it doesn't matter that it's not in the list
-		const value = selectValue(column);
-		if (value) {
-			names.push(value);
-		}
-	}
-	field.form[field.name.replace(/].*/, '][name]')].value = prefix + names.join('_');
+	field.form[field.name.replace(/].*/, '][name]')].value = indexesName(field.closest('tr'), namePatterns[selectValue(type)] || '');
 }
 
 
@@ -741,8 +761,7 @@ function sqlExport(event) {
 	if (!/^(csv|csv;|tsv)$/.test(format) || !/^(text|file)$/.test(output)) {
 		return true;
 	}
-	const div = form.previousElementSibling;
-	const table = (div && div.classList.contains('scrollable') ? qs('table', div) : null);
+	const table = qs('.scrollable table', form);
 	if (!table) {
 		return true;
 	}
@@ -780,6 +799,30 @@ function sqlExport(event) {
 	} else {
 		location.href = url;
 	}
+	return false;
+}
+
+/** Save the values modified by Ctrl+click in the result of the SQL command
+* @param {string} message
+* @return {boolean} false
+* @this HTMLInputElement submit button
+*/
+function sqlSave(message) {
+	const button = this;
+	const form = button.form;
+	ajax(form.action, request => {
+		const response = document.createElement('div');
+		response.innerHTML = request.responseText;
+		for (const el of qsa('[data-name]', response)) {
+			// a join can display the same row more than once, refresh all its cells
+			for (const td of qsa('[data-name="' + el.dataset.name.replace(/[\\"]/g, '\\$&') + '"]')) {
+				td.innerHTML = el.innerHTML;
+			}
+			el.remove();
+		}
+		button.disabled = !qs('.error', response); // an error can be fixed and saved again
+		ajaxStatus(response.innerHTML);
+	}, formData(form, button), message);
 	return false;
 }
 
@@ -834,15 +877,20 @@ function uploadProgress(url, assign) {
 
 
 /** Handle changing trigger time or event
-* @param {string} tableRe string - a regular expression can't be passed in a data attribute
-* @param {string} table
+* @param {string} nameRe string - a regular expression can't be passed in a data attribute
+* @param {string} namePattern Adminer::namePattern() with the table
 * @this HTMLSelectElement
 */
-function triggerChange(tableRe, table) {
+function triggerChange(nameRe, namePattern) {
 	const form = this.form;
 	const formEvent = selectValue(form['Event']);
-	if (new RegExp(tableRe).test(form['Trigger'].value)) {
-		form['Trigger'].value = table + '_' + (selectValue(form['Timing'])[0] + formEvent[0]).toLowerCase();
+	if (new RegExp(nameRe).test(form['Trigger'].value)) {
+		form['Trigger'].value = namePattern
+			.replace('{timing}', selectValue(form['Timing'])[0].toLowerCase())
+			.replace('{event}', ['INSERT', 'UPDATE', 'DELETE'].filter(event => formEvent.includes(event)).map(event => event[0].toLowerCase()).join(''))
+			.replace('{type}', (/ROW/.test(selectValue(form['Type'])) ? 'row' : 'statement')) // MS SQL AS and Oracle '' are statement-level
+			.replace('{columns}', () => (/ OF/.test(formEvent) ? form['Of'].value.split(',').map(column => column.trim()).filter(column => column).map(column => '_' + column).join('') : '')) // function - column names can contain $&
+		;
 	}
 	alterClass(form['Of'], 'hidden', !/ OF/.test(formEvent));
 }

@@ -9,7 +9,7 @@ if (!defined('Adminer\DRIVER')) {
 	// MySQLi supports everything, MySQL doesn't support multiple result sets, PDO_MySQL doesn't support orgtable
 	if (extension_loaded("mysqli") && $_GET["ext"] != "pdo") {
 		class Db extends \mysqli {
-			/** @var Db */ static $instance;
+			/** @var ?Db */ static $instance;
 			public $extension = "MySQLi", $flavor = '';
 
 			function __construct() {
@@ -57,6 +57,10 @@ if (!defined('Adminer\DRIVER')) {
 
 			function inTransaction(): bool {
 				return false; // MySQLi exposes no API for it and this class can't extend SqlDb to inherit the default
+			}
+
+			function begin(): bool {
+				return $this->begin_transaction(); // commit() and rollback() are inherited from MySQLi
 			}
 		}
 
@@ -140,12 +144,12 @@ if (!defined('Adminer\DRIVER')) {
 			}
 
 			/** Fetch next field
-			* @return \stdClass properties: name, type (0 number, 15 varchar, 254 char), charsetnr (63 binary); optionally: table, orgtable, orgname
+			* @return ResultField native_type is the type name used by the database
 			*/
 			function fetch_field(): \stdClass {
 				$return = mysql_fetch_field($this->result, $this->offset++); // offset required under certain conditions
 				$return->orgtable = $return->table;
-				$return->charsetnr = ($return->blob ? 63 : 0);
+				$return->native_type = idx(array("string" => "varchar", "real" => "double"), $return->type, $return->type); // the other names match the MySQL types
 				return $return;
 			}
 		}
@@ -216,7 +220,7 @@ if (!defined('Adminer\DRIVER')) {
 		public $partitionBy = array("HASH", "LINEAR HASH", "KEY", "LINEAR KEY", "RANGE", "LIST");
 
 		function operators(?array $tableStatus): array {
-			return array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "REGEXP", "IN", "FIND_IN_SET", "IS NULL", "NOT LIKE", "NOT REGEXP", "NOT IN", "IS NOT NULL", "SQL");
+			return array("=", "<", ">", "<=", ">=", "!=", "&", "LIKE", "LIKE %%", "REGEXP", "IN", "BETWEEN", "FIND_IN_SET", "IS NULL", "NOT LIKE", "NOT REGEXP", "NOT IN", "IS NOT NULL", "SQL");
 		}
 
 		static function connect(string $server, string $username, string $password) {
@@ -356,15 +360,25 @@ if (!defined('Adminer\DRIVER')) {
 		}
 
 		function typeName(\stdClass $field): string {
-			// https://dev.mysql.com/doc/dev/mysql-server/latest/field__types_8h.html
+			$name = parent::typeName($field);
+			if ($name != "") {
+				// PDO_MySQL reports the internal names in upper case, it can't tell text from blob, varchar from varbinary and char from binary
+				$types = array(
+					"TINY" => "tinyint", "SHORT" => "smallint", "LONG" => "int", "INT24" => "mediumint", "LONGLONG" => "bigint",
+					"NEWDECIMAL" => "decimal", "VAR_STRING" => "varchar", "STRING" => "char",
+				);
+				return idx($types, $name, strtolower($name));
+			}
+			// MySQLi reports the numbers used in the protocol, https://dev.mysql.com/doc/dev/mysql-server/latest/field__types_8h.html
 			$types = array(
-				"decimal", "tinyint", "smallint", "int", "float", "double", 7 => "timestamp",
-				"bigint", "mediumint", "date", "time", "datetime", "year", 15 => "varchar", "bit",
-				242 => "vector", 245 => "json", "decimal", "enum", "set",
-				"tinytext", "mediumtext", "longtext", "text", "varchar", "char", "geometry",
+				"decimal", "tinyint", "smallint", "int", "float", "double",
+				7 => "timestamp", "bigint", "mediumint", "date", "time", "datetime", "year",
+				15 => "varchar", "bit",
+				242 => "vector",
+				245 => "json", "decimal", "enum", "set", "tinytext", "mediumtext", "longtext", "text", "varchar", "char", "geometry",
 			);
 			$return = idx($types, $field->type, "");
-			return parent::typeName($field) ?: ($field->charsetnr == 63 // 63 - binary
+			return ($field->charsetnr == 63 // 63 - binary
 				? str_replace(array("text", "varchar", "char"), array("blob", "varbinary", "binary"), $return)
 				: $return
 			);
@@ -372,6 +386,13 @@ if (!defined('Adminer\DRIVER')) {
 
 		function quoteBinary(string $s): string {
 			return "X" . q(bin2hex($s));
+		}
+
+		function md5(string $column, array $field) {
+			if (is_blob($field) || preg_match('~' . text_type() . '~', $field["type"])) {
+				// PHP hashes the value in the connection charset
+				return "MD5(" . (is_blob($field) || preg_match("~^utf8~", $field["collation"]) ? $column : "CONVERT($column USING " . charset($this->conn) . ")") . ")";
+			}
 		}
 
 		function warnings() {
@@ -425,6 +446,14 @@ if (!defined('Adminer\DRIVER')) {
 				$c_style = (strpos($sql_mode, 'NO_BACKSLASH_ESCAPES') === false);
 			}
 			return $c_style;
+		}
+
+		function hasEstimatedRows(): bool {
+			return true; // InnoDB
+		}
+
+		function isSystem(string $db, string $schema = ""): bool {
+			return information_schema($db, $schema) || in_array($db, array("mysql", "sys"));
 		}
 
 		function lineComment(): string {
@@ -508,7 +537,7 @@ if (!defined('Adminer\DRIVER')) {
 
 	/** Get logged user */
 	function logged_user(): string {
-		return get_val("SELECT USER()");
+		return get_val("SELECT CURRENT_USER()"); // the account matched by the connection, it is used in DEFINER if the clause is omitted
 	}
 
 	/** Get tables list
@@ -983,7 +1012,7 @@ if (!defined('Adminer\DRIVER')) {
 
 	/** Get information about trigger
 	* @param string $name trigger name
-	* @return Trigger
+	* @return Trigger empty if the trigger doesn't exist
 	*/
 	function trigger(string $name, string $table): array {
 		if ($name == "") {
@@ -994,11 +1023,11 @@ if (!defined('Adminer\DRIVER')) {
 		if ($return) {
 			list($return["Event"], $return["Of"]) = trigger_event($return);
 		}
-		return $return;
+		return ($return ?: array());
 	}
 
 	/** Get defined triggers
-	* @return array{string, string}[]
+	* @return array{0: string, 1: string, 2?: array{ns: string, function: string, name: string}}[] [$timing, $event, $routine]
 	*/
 	function triggers(string $table): array {
 		$return = array();
@@ -1029,7 +1058,7 @@ if (!defined('Adminer\DRIVER')) {
 
 	/** Get information about stored routine
 	* @param 'FUNCTION'|'PROCEDURE' $type
-	* @return Routine
+	* @return Routine|array{} empty if the routine doesn't exist
 	*/
 	function routine(string $name, string $type): array {
 		$rows = get_rows("SELECT PARAMETER_NAME, DTD_IDENTIFIER, PARAMETER_MODE, COLLATION_NAME
@@ -1051,7 +1080,7 @@ ORDER BY ORDINAL_POSITION");
 				"collation" => $row["COLLATION_NAME"],
 			);
 		}
-		$return = (array) connection()->query("SELECT
+		$return = connection()->query("SELECT
 	ROUTINE_COMMENT comment,
 	ROUTINE_DEFINITION definition,
 	LOWER(EXTERNAL_LANGUAGE) language,
@@ -1061,6 +1090,9 @@ ORDER BY ORDINAL_POSITION");
 	CONCAT('SQL SECURITY ', SECURITY_TYPE) security
 FROM information_schema.ROUTINES
 WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_TYPE = '$type' AND ROUTINE_NAME = " . q($name))->fetch_assoc(); // the aliases must not be reserved words, e.g. DETERMINISTIC is
+		if (!$return) {
+			return array();
+		}
 		$return['options'] = array(
 			"DEFINER" => $return['definer'], // empty for the logged user so that the routine can be created by anyone
 			"DETERMINISTIC" => $return['is_deterministic'],
@@ -1225,51 +1257,7 @@ WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_TYPE = '$type' AND ROUTINE_NAME = 
 		return $return;
 	}
 
-	/** Check whether a feature is supported:
-	* - check - CHECK constraints on the table structure page
-	* - columns - columns can be defined when creating and altering a table
-	* - comment - comments of tables and columns
-	* - copy - copying a table including its data
-	* - cursor - rows are paged by a cursor so the number of the following rows is unknown (Redis, SimpleDB)
-	* - database - creating, altering and dropping databases
-	* - deferrable - deferrable foreign keys (PostgreSQL)
-	* - descidx - descending index columns
-	* - drop_col - dropping a column
-	* - dump - export in the SQL format
-	* - event - scheduled events (MySQL)
-	* - fast_status - table_status() is cheap so the table list is printed at once instead of by a background request
-	* - indexes - listing and altering indexes
-	* - kill - killing a process or a slow query
-	* - materializedview - materialized views (PostgreSQL)
-	* - move_col - a column can be added in the middle of a table
-	* - partial_indexes - index condition (PostgreSQL)
-	* - privileges - the Privileges page
-	* - procedure - procedures in addition to functions
-	* - processlist - the Process list page
-	* - routine - stored functions
-	* - scheme - schemas inside a database
-	* - sequence - sequences (PostgreSQL)
-	* - single_db - there is only one database so the user is taken to it and the database select is not printed (Elasticsearch)
-	* - single_table - there is only one table in each database so the user is taken to it (Redis)
-	* - sql - the SQL command page and running multiple queries
-	* - status - the Status page
-	* - table - tables have a fixed structure, other drivers just select all columns
-	* - transaction_ddl - DDL is transactional so an object can be dropped and recreated atomically
-	* - trigger - triggers of tables
-	* - type - user defined types (PostgreSQL)
-	* - variables - the Variables page
-	* - view - creating, altering and dropping views
-	* - view_trigger - triggers of views (SQLite, MS SQL)
-	*
-	* Other capabilities are declared by defining an optional driver function, detected by function_exists():
-	* - alter_table() - creating and altering tables
-	* - db_status() - sizes of the whole database at once (SQLite)
-	* - drop_sql() - the export drops all tables at the beginning (PostgreSQL)
-	* - drop_tables() - dropping the selected tables
-	* - foreign_keys_sql() - the export adds foreign keys after creating all tables
-	* - move_tables() - moving the selected tables to another database
-	* - truncate_all_sql() - the export truncates all tables by a single command (PostgreSQL)
-	* - truncate_tables() - truncating the selected tables
+	/** Check whether a feature is supported, the features are listed in docs/developing.md#driver-capabilities
 	* @param literal-string $feature
 	*/
 	function support(string $feature): bool {

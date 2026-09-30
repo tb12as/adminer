@@ -1,6 +1,6 @@
 # Tests
 
-The end-to-end tests in this directory connect to a database server of the tested driver, all of them using the database `adminer_test` - the screenshots and OpenSearch, which has no databases, are the exceptions.
+The end-to-end tests in this directory connect to a database server of the tested driver, all of them using the database `adminer_test` - the plugins, the screenshots and OpenSearch, which has no databases, are the exceptions.
 The [unit tests](#unit-tests) need nothing but the PHP CLI.
 
 ## Running
@@ -11,20 +11,28 @@ The tests are stored in `tests/*.spec.js`, one file per driver plus [plugins.spe
 - `composer e2e mysql` runs only the files matching mysql.
 - `composer e2e -- mysql --project=native` runs only the native extension - Composer passes options through only after `--`.
 
-Use `composer e2e -- --ui` to watch a test, `--headed --debug` to step through it; a failed run stores a trace in `tests/results/`, open it by `npx playwright show-trace`.
+The browser is the installed Chrome, `PLAYWRIGHT_BROWSER` selects another one: `chromium-headless-shell`, `firefox` or `webkit`.
+`composer install` doesn't install them - download one by e.g. `npx playwright install firefox`.
+Chrome Headless Shell ran the MySQL tests with the native extension in 21 seconds instead of 23 seconds in the installed Chrome.
+
+Use `composer e2e -- --ui` to watch a test, `--headed --debug` to step through it; a failed test stores the page in `tests/results/native/` or `tests/results/pdo/`, `--trace=retain-on-failure` stores also its trace there, open it by `npx playwright show-trace`.
 A new test can be recorded by `npx playwright codegen http://localhost:8000/adminer/`.
 The helpers in [adminer.js](/tests/adminer.js) cover what Adminer does repeatedly: `link()` and `button()` take the first match because Adminer prints some links in the menu as well, and `setValue()` fills a field which jush replaces by a highlighted editor.
 
 Each file logs in once and the tests inside it run in the order they are written, so a failing test stops the rest of the file.
 The first test also removes what an interrupted run left behind, mostly by dropping the whole `adminer_test` database, so two runs of the same driver must never overlap.
-The bulk table operations need a second target, so they create and drop `adminer_test2` - a database in MySQL and MariaDB, a schema in PostgreSQL, CockroachDB and MS SQL.
+The bulk table operations need a second target, so they create and drop `adminer_test2` - a database in MySQL and MariaDB, a schema in PostgreSQL, CockroachDB and MS SQL - and drop it also before creating it where the first test doesn't remove it.
 Every test fails also on a PHP error printed to any response and on a browser console error or an uncaught JavaScript exception, even if the page otherwise looks right.
-Everything runs in a single worker, which takes about twenty minutes for all drivers with both extensions.
-Parallelism would help little: the drivers use different database servers but they all share the `adminer_test` database name, the `native` and `pdo` projects of one driver work with the very same data, and the requests would queue in the development server anyway, because it handles one at a time unless `PHP_CLI_SERVER_WORKERS` is set (which needs `fork()`, so not on Windows).
+By default, everything runs in a single worker, which takes about twenty minutes for all drivers with both extensions on the [development server](#development-server).
+`composer e2e -- --workers=3` runs the files of different drivers in parallel: the drivers use different database servers and the plugins have their own database `adminer_plugins`.
+The `native` and `pdo` projects of one driver work with the very same data, so [run.js](/tests/run.js) runs all files of `native` first and then all files of `pdo`, unless `--project` is passed.
+The development server handles one request at a time unless `PHP_CLI_SERVER_WORKERS` is set (which needs `fork()`, so not on Windows).
+The MySQL, SQLite and PostgreSQL tests with the native extension take 1.9 minutes with three workers on nginx with two `php-cgi` processes instead of 3.1 minutes with one.
 
 ## Development Server
 
-The tests expect Adminer at <http://localhost:8000> (or at `ADMINER_URL`), served from the repository root by `php -S localhost:8000`.
+The tests expect Adminer at <http://localhost:8000> (or at `ADMINER_URL`, which can include a path, e.g. `http://localhost/adminer`), served from the repository root by `php -S localhost:8000`.
+Nginx is about three times faster even with the single worker - the MySQL tests with the native extension take 23 seconds on nginx with two `php-cgi` processes instead of 66 seconds on `php -S`.
 `display_errors` must be on, otherwise the tests never see the PHP errors they look for in the responses, and `file_uploads` must stay on (the default), otherwise the import tests find a disabled file field.
 The tests fill in the standard login form, so a plugin changing it breaks them - `AdminerLoginServers` for example replaces the server field by a list.
 
@@ -121,7 +129,7 @@ This driver is tested only with the `native` project because it doesn't use any 
 
 [plugins.spec.js](/tests/plugins.spec.js) covers the bundled plugins which no driver test can reach, above all the `dumpFormat` and `dumpOutput` hooks, which are aggregated across all plugins instead of stopping at the first one.
 It logs in through [tests/plugins.php](/tests/plugins.php), an entry point instantiating a fixed set of plugins - passing them to `Plugins` explicitly skips the autoload from `adminer-plugins/`, so the run doesn't depend on what is deployed there.
-It uses the MySQL server and the `adminer_test` database, creating the tables by SQL, and it runs only with the `native` project because the plugins don't depend on the extension.
+It uses the MySQL server and the `adminer_plugins` database, not to collide with mysql.spec.js running in parallel, creating the tables by SQL, and it runs only with the `native` project because the plugins don't depend on the extension.
 
 ## Screenshots
 

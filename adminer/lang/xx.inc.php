@@ -32,6 +32,7 @@ Lang::$translations = array(
 	'Language' => 'Xx',
 	'Invalid CSRF token. Submit the form again.' => 'Xx.',
 	'If you did not send this request from Adminer, close this page.' => 'Xx.',
+	'Not found.' => 'Xx.',
 	'No extension' => 'Xx',
 	'None of the supported PHP extensions (%s) are available.' => 'Xx (%s).', // %s contains the list of the extensions, e.g. 'mysqli, PDO_MySQL'
 	'Connecting to privileged ports is not allowed.' => 'Xx.',
@@ -92,6 +93,8 @@ Lang::$translations = array(
 	'You can upload a large SQL file via FTP and import it from the server.' => 'Xx.',
 	'You are offline.' => 'Xx.',
 	'Menu' => 'Xx',
+	'Documentation' => 'Xx',
+	'Database management in a single PHP file' => 'Xx',
 
 	'Export' => 'Xx',
 	'Output' => 'Xx',
@@ -103,9 +106,9 @@ Lang::$translations = array(
 
 	'Database' => 'Xx',
 	'DB' => 'XX',
+	'System%s' => 'Xx%s', // group of system databases or schemas in the menu, %s is always empty
 	'Use' => 'Xx',
 	'Select database' => 'Xx',
-	'Invalid database.' => 'Xx.',
 	'Database has been dropped.' => 'Xx.',
 	'Databases have been dropped.' => 'Xx.',
 	'Database has been created.' => 'Xx.',
@@ -265,7 +268,7 @@ Lang::$translations = array(
 	'Text length' => 'Xx',
 	'Action' => 'Xx',
 	'Full table scan' => 'Xx',
-	'Unable to select the table' => 'Xx',
+	'Unable to select the table.' => 'Xx.',
 	'No rows.' => 'Xx.',
 	'%d / ' => '%d / ', // used in SQL query limit and it is followed by another number, e.g. '10 / 50 rows' meaning 10 of 50 rows
 	'%d row(s)' => array('%d xx', '%d xx'),
@@ -315,6 +318,7 @@ Lang::$translations = array(
 	'Relations' => 'Xx',
 
 	'Editor' => 'Xx',
+	'Data editing in a single PHP file' => 'Xx',
 	'$1-$3-$5' => 'xx', // date format in Editor: $1 yyyy, $2 yy, $3 mm, $4 m, $5 dd, $6 d
 	'[yyyy]-mm-dd' => 'xx', // hint for date format - use language equivalents for day, month and year shortcuts
 	'HH:MM:SS' => 'Xx', // hint for time format - use language equivalents for hour, minute and second shortcuts
@@ -332,7 +336,6 @@ Lang::$translations = array(
 	'Schema has been created.' => 'Xx.',
 	'Schema has been altered.' => 'Xx.',
 	'Schema' => 'Xx',
-	'Invalid schema.' => 'Xx.',
 
 	// PostgreSQL sequences support
 	'Sequences' => 'Xx',
@@ -349,6 +352,10 @@ Lang::$translations = array(
 	'Type has been created.' => 'Xx.',
 	'Type has been altered.' => 'Xx.',
 	'Alter type' => 'Xx',
+
+	// PostgreSQL extensions
+	'Extensions' => 'Xx',
+	'Version' => 'Xx',
 
 	// Table check constraints
 	'Checks' => 'Xx',

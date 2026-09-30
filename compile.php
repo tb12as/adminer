@@ -99,7 +99,7 @@ function put_file($match) {
 				}
 			}
 			unset($functions["__construct"], $functions["__destruct"], $functions["set_charset"], $functions["multi_query"], $functions["store_result"], $functions["next_result"]);
-			unset($functions["inTransaction"]); // SqlDb provides a default implementation, MySQL overrides it only because its Db extends \MySQLi
+			unset($functions["inTransaction"], $functions["begin"]); // SqlDb provides a default implementation, MySQL overrides it only because its Db extends \MySQLi
 			unset($functions["parse_type"], $functions["trigger_event"]); // helpers of the MySQL driver, not a part of the driver interface
 			if (strpos($return, "function slowQuery(")) {
 				unset($functions["connection_id"]); // slow_query() kills the query by its connection ID only if the driver can't limit the execution time itself
@@ -148,6 +148,10 @@ function minify_css($file) {
 	return Adminer\compress_string(preg_replace('~\s*([:;{},])\s*~', '\1', preg_replace('~/\*.*?\*/\s*~s', '', $file)));
 }
 
+function minify_svg($file) {
+	return Adminer\compress_string(preg_replace('~<!--.*?-->|\s+(?=<)~s', '', $file));
+}
+
 function minify_js($file) {
 	$file = preg_replace_callback("~'use strict';~", function ($match) {
 		static $count = 0;
@@ -162,18 +166,15 @@ function minify_js($file) {
 
 // $callback only to match signature
 function compile_file($match, $callback = '') {
-	global $project;
-	$file = "";
+	global $project, $static_files;
 	list(, $filenames, $callback) = $match;
-	if ($filenames != "") {
-		foreach (preg_split('~;\s*~', $filenames) as $filename) {
-			$file .= file_get_contents(__DIR__ . "/$project/$filename");
-		}
+	$file = "";
+	foreach (preg_split('~;\s*~', $filenames) as $filename) {
+		$file .= file_get_contents(__DIR__ . "/$project/$filename");
 	}
-	if ($callback) {
-		return "'" . call_user_func($callback, $file) . "'"; // compressed string doesn't need escaping
-	}
-	return "base64_decode('" . base64_encode($file) . "')";
+	$return = "'" . add_apo_slashes(call_user_func($callback, $file)) . "'";
+	$static_files .= $return;
+	return $return;
 }
 
 function number_type() {
@@ -247,7 +248,7 @@ include __DIR__ . "/adminer/include/pdo.inc.php";
 include __DIR__ . "/adminer/include/driver.inc.php";
 include __DIR__ . "/adminer/include/plugins.inc.php"; // for Plugins::checksum()
 $features = array(
-	"check", "call" => "routine", "dump", "event", "privileges", "procedure" => "routine", "processlist", "routine",
+	"check", "call" => "routine", "dump", "event", "extension", "privileges", "procedure" => "routine", "processlist", "routine",
 	"scheme", "sequence", "sql", "status", "trigger", "type", "user" => "privileges", "variables", "view",
 );
 $lang_ids = array(); // global variable simplifies usage in a callback function
@@ -292,8 +293,9 @@ $file = replace_re('~(if \(!defined\(\'Adminer\\\\DIR\'\)\) \{.*\n\t)?define\(\'
 $dedent = function ($match) {
 	return preg_replace('~^\t~m', '', "$match[2]"); // the other replacements match the indentation of the source
 };
-$file = replace_re('~^(\t*)if \(!defined\(\'Adminer\\\\DIR\'\)\) \{[^\n]*\n(.*\n)\1\}\n~msU', $dedent, $file);
-$file = replace_re('~^(\t*)if \(defined\(\'Adminer\\\\DIR\'\)\) \{[^\n]*\n.*\n\1\}(?: else \{[^\n]*\n(.*\n)\1\})?\n~msU', $dedent, $file);
+// a build may contain only one kind of the conditions, the check below guarantees that none survives
+$file = preg_replace_callback('~^(\t*)if \(!defined\(\'Adminer\\\\DIR\'\)\) \{[^\n]*\n(.*\n)\1\}\n~msU', $dedent, $file);
+$file = preg_replace_callback('~^(\t*)if \(defined\(\'Adminer\\\\DIR\'\)\) \{[^\n]*\n.*\n\1\}(?: else \{[^\n]*\n(.*\n)\1\})?\n~msU', $dedent, $file);
 if (strpos($file, "Adminer\\DIR") !== false) {
 	not_found("Adminer\\DIR"); // the condition must not survive compilation
 }
@@ -318,6 +320,8 @@ $file = replace_re('~(function official_design_checksums\(\): array \{\n).*?(\n\
 if ($vendor) {
 	foreach ($features as $feature) {
 		if (!Adminer\support($feature)) {
+			// the elseif branch first, the pattern of the if branch matches inside its condition too
+			$file = preg_replace("((\t*)" . preg_quote('} elseif (support("' . $feature . '")') . ".*?\n\\1\\})s", '\1}', $file);
 			$file = preg_replace("((\t*)" . preg_quote('if (support("' . $feature . '")') . ".*?\n\\1\\}( else)?)s", '', $file);
 		}
 	}
@@ -341,7 +345,7 @@ if ($vendor) {
 	}
 	$file = replace_re('~doc_link\(array\((.*)\)\)~sU', function ($match) use ($vendor) {
 		list(, $links) = $match;
-		$links = preg_replace("~'(?!(" . ($vendor == "mysql" ? "sql|mariadb" : $vendor) . ")')[^']*' => [^,]*,?~", '', $links);
+		$links = preg_replace("~'(?!(" . ($vendor == "mysql" ? "sql|mariadb" : ($vendor == "pgsql" ? "pgsql|cockroach" : $vendor)) . ")')[^']*' => [^,]*,?~", '', $links);
 		return (trim($links) ? "doc_link(array($links))" : "''");
 	}, $file);
 	//! strip doc_link() definition
@@ -370,10 +374,14 @@ if ($_SESSION["lang"]) { // single language version
 if (function_exists('stripTypes')) {
 	$file = stripTypes($file);
 }
-$file = replace_re("~compile_file\\('([^']+)'(?:, '([^']*)')?\\)~", 'compile_file', $file); // integrate static files
-$replace = 'preg_replace("~\\\\\\\\?.*~", "", ME) . "?file=\1&version=' . Adminer\VERSION . '"';
+$static_files = "";
+$file = replace_re("~compile_file\\('([^']+)', '([^']+)'\\)~", 'compile_file', $file); // integrate static files
+$version = Adminer\VERSION . "+" . dechex(crc32($static_files)); // the checksum distinguishes -dev builds and builds of one version with different drivers
+$replace = 'preg_replace("~\\\\\\\\?.*~", "", ME) . "?file=\1&version=' . $version . '"';
+$file = replace('"?file=worker.js&version=" . VERSION', '"?file=worker.js&version=' . $version . '"', $file);
 $file = replace_re('~<\?php echo DIR; \?>static/(default\.css)~', '<?php echo h(' . $replace . '); ?>', $file);
 $file = replace_re('~DIR \. "static/(functions\.js)"~', $replace, $file);
+$file = replace_re('~\'src\' => DIR \. "static/(logo\.svg)"~', "'src' => $replace", $file); // the URL is used in JSON, not in HTML, so it must not be escaped by h()
 if ($project != "editor") { // the Editor doesn't use jush
 	$file = replace_re('~DIR \. "static/jush/modules/(jush\.js)"~', $replace, $file); // before the general rule which would keep the path
 }

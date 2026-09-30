@@ -4,7 +4,7 @@ namespace Adminer;
 $row = $_POST;
 
 if ($_POST && !$error) {
-	$link = preg_replace('~ns=[^&]*&~', '', ME) . "ns=";
+	$link = preg_replace('~&ns=[^&]*~', '', ME) . "ns=";
 	if ($_POST["drop"]) {
 		query_redirect("DROP SCHEMA " . idf_escape($_GET["ns"]), $link, lang('Schema has been dropped.'));
 	} else {
@@ -20,7 +20,12 @@ if ($_POST && !$error) {
 	}
 }
 
-page_header($_GET["ns"] != "" ? lang('Alter schema') : lang('Create schema'), $error);
+$statement = ($_GET["ns"] != "" ? "alter" : "create");
+page_header($_GET["ns"] != "" ? lang('Alter schema') : lang('Create schema'), $error, array(), "", false, doc_link(array(
+	'pgsql' => "sql-$statement" . "schema.html",
+	'cockroach' => "$statement-schema",
+	'mssql' => "t-sql/statements/create-schema-transact-sql", // ALTER SCHEMA only transfers objects
+)));
 
 if (!$row) {
 	$row["name"] = $_GET["ns"];

@@ -13,6 +13,9 @@ if (isset($_GET["sqlite"])) {
 
 			function attach(array $server, string $username, string $password): string {
 				$this->link = new \SQLite3($server["path"]);
+				if (method_exists($this->link, 'setAuthorizer')) { // PHP 8.0+
+					$this->link->setAuthorizer(array($this, 'authorize'));
+				}
 				$version = \SQLite3::version();
 				$this->server_info = $version["versionString"];
 				return '';
@@ -59,12 +62,9 @@ if (isset($_GET["sqlite"])) {
 			function fetch_field(): \stdClass {
 				$types = array(1 => "integer", "real", "text", "blob", "null"); // SQLITE3_INTEGER, SQLITE3_FLOAT, SQLITE3_TEXT, SQLITE3_BLOB, SQLITE3_NULL
 				$column = $this->offset++;
-				$type = $this->result->columnType($column);
 				return (object) array(
 					"name" => $this->result->columnName($column),
-					"type" => ($type == SQLITE3_TEXT ? 15 : 0),
-					"native_type" => $types[$type],
-					"charsetnr" => ($type == SQLITE3_BLOB ? 63 : 0), // 63 - binary
+					"native_type" => $types[$this->result->columnType($column)],
 				);
 			}
 		}
@@ -74,7 +74,11 @@ if (isset($_GET["sqlite"])) {
 			public $extension = "PDO_SQLite";
 
 			function attach(array $server, string $username, string $password): string {
-				return $this->dsn(DRIVER . ":" . $server["path"], "", "");
+				$return = $this->dsn(DRIVER . ":" . $server["path"], "", "", array(), (class_exists('Pdo\Sqlite') ? 'Pdo\Sqlite' : 'PDO'));
+				if (!$return && method_exists($this->pdo, 'setAuthorizer')) { // PHP 8.5+
+					$this->pdo->setAuthorizer(array($this, 'authorize'));
+				}
+				return $return;
 			}
 
 			function quote(string $string): string {
@@ -89,6 +93,8 @@ if (isset($_GET["sqlite"])) {
 
 	if (class_exists('Adminer\SqliteDb')) {
 		class Db extends SqliteDb {
+			private $attaching = false;
+
 			function attach(array $server, string $username, string $password): string {
 				parent::attach($server, $username, $password);
 				$this->query("PRAGMA foreign_keys = 1");
@@ -98,10 +104,19 @@ if (isset($_GET["sqlite"])) {
 
 			function select_db(string $filename): bool {
 				$query = "ATTACH " . $this->quote(preg_match("~(^[/\\\\]|:)~", $filename) ? $filename : dirname($_SERVER["SCRIPT_FILENAME"]) . "/$filename") . " AS a";
-				if (is_readable($filename) && $this->query($query)) {
+				$this->attaching = true;
+				$attached = is_readable($filename) && $this->query($query);
+				$this->attaching = false;
+				if ($attached) {
 					return !self::attach(server_parts(array("path" => $filename)), '', '');
 				}
 				return false;
+			}
+
+			/** Deny attaching a file, also used by VACUUM INTO */
+			function authorize(int $action, ?string $arg1): int {
+				// 24 - SQLITE_ATTACH, '' is a temporary database used also by VACUUM
+				return ($action != 24 || $arg1 === '' || $this->attaching ? 0 : 1); // SQLITE_OK, SQLITE_DENY
 			}
 		}
 	}
@@ -129,7 +144,7 @@ if (isset($_GET["sqlite"])) {
 		public $grouping = array("avg", "count", "count distinct", "group_concat", "max", "min", "sum");
 
 		function operators(?array $tableStatus): array {
-			$return = array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL"); // REGEXP can be user defined function
+			$return = array("=", "<", ">", "<=", ">=", "!=", "&", "LIKE", "LIKE %%", "IN", "BETWEEN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL"); // REGEXP can be user defined function
 			if (preg_match('~^fts\d+$~i', (string) idx($tableStatus, "Engine"))) { // table_status() puts the module of a virtual table in Engine
 				$return[] = "MATCH"; // FTS accepts it on a single column and on the whole table
 			}
@@ -157,6 +172,12 @@ if (isset($_GET["sqlite"])) {
 
 		function quoteBinary(string $s): string {
 			return "x" . q(bin2hex($s));
+		}
+
+		function typeName(\stdClass $field): string {
+			// PDO_SQLite reports the declared type of the column in sqlite:decl_type, the expressions only the PHP type of the value
+			$return = strtolower(idx((array) $field, 'sqlite:decl_type', parent::typeName($field)));
+			return idx(array("string" => "text", "double" => "real"), $return, $return);
 		}
 
 		function engines(): array {
@@ -788,6 +809,9 @@ ORDER BY (name LIKE 'sqlite_%'), name");
 			get_val("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = " . q($name)),
 			$match
 		);
+		if (!$match) {
+			return array();
+		}
 		$of = $match[3];
 		return array(
 			"Timing" => strtoupper($match[1]),

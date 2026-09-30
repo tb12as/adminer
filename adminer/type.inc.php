@@ -39,7 +39,8 @@ function add_enum_values(string $type, string $old, string $new): ?array {
 $TYPE = $_GET["type"];
 $row = $_POST;
 // types(true) is the list used for the links to this page in table structure
-$type = ($TYPE != "" ? type_definition(+array_search($TYPE, types(true))) : array());
+$type_id = ($TYPE != "" ? array_search($TYPE, types(true)) : 0);
+$type = ($type_id ? type_definition(+$type_id) : array()); // 0 - the type is being created, false - it doesn't exist
 $object = ($type["kind"] == 'd' ? "DOMAIN" : "TYPE"); // domains are created, altered and dropped as DOMAIN
 
 if ($_POST && !$error) {
@@ -87,7 +88,17 @@ if ($_POST && !$error) {
 	}
 }
 
-page_header($TYPE != "" ? lang('Alter type') . ": " . h($TYPE) : lang('Create type'), $error);
+page_header(
+	($TYPE != "" ? lang('Alter type') . ": " . h($TYPE) : lang('Create type')),
+	$error,
+	"#user-types",
+	"",
+	($type_id === false),
+	doc_link(array(
+		'pgsql' => "sql-createtype.html",
+		'cockroach' => "create-type",
+	))
+);
 
 if (!$row) {
 	$row["name"] = $TYPE;
@@ -99,9 +110,6 @@ if (!$row) {
 <p>
 <?php
 echo lang('Name') . ": <input name='name' value='" . h($row['name']) . "' autocapitalize='off'>\n";
-echo doc_link(array(
-	'pgsql' => "sql-createtype.html",
-), "?");
 textarea("as", $row["as"]);
 echo "<p><input type='submit' value='" . lang('Save') . "'>\n";
 if ($TYPE != "") {

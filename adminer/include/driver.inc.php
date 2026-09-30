@@ -12,13 +12,14 @@ function get_driver(string $id): ?string {
 }
 
 abstract class SqlDriver {
-	/** @var Driver */ static $instance;
+	/** @var ?Driver */ static $instance;
 	/** @var string[] */ static $drivers = array(); // all available drivers
 	/** @var list<string> */ static $extensions = array(); // possible extensions in the current driver
 	/** @var string */ static $jush; // JUSH identifier
 	/** @var bool */ static $passwords = true; // false in databases without passwords, they can be protected only by a plugin
 
 	/** @var list<string> */ static $serverSchemes = array(); // URL schemes allowed in the server name
+	/** @var list<int> */ static $serverPorts = array(); // privileged ports used by the protocol of the driver
 	/** @var bool */ static $serverSocket = false; // the server name can specify a socket
 	/** @var bool */ static $serverPath = false; // the server name can contain a path
 	/** @var bool */ static $serverFile = false; // the server name is a path to a file, not an address
@@ -83,12 +84,19 @@ abstract class SqlDriver {
 			) {
 				return lang('Invalid server.');
 			}
-			if ($parts["port"] != "" && ($parts["port"] < 1024 || $parts["port"] > 65535)) {
+			if (
+				$parts["port"] != ""
+				&& ($parts["port"] > 65535 || ($parts["port"] < 1024 && !in_array($parts["port"], static::$serverPorts)))
+			) {
 				return lang('Connecting to privileged ports is not allowed.');
 			}
 		}
 		$connection = new Db;
 		return ($connection->attach($parts, $username, $password) ?: $connection);
+	}
+
+	/** Forget the logged user */
+	static function disconnect(): void {
 	}
 
 	/** Create object for performing database operations */
@@ -223,24 +231,27 @@ abstract class SqlDriver {
 	}
 
 	/** Begin transaction
-	* @return Result|bool
+	* @return bool
 	*/
 	function begin() {
-		return queries("BEGIN");
+		remember_query("BEGIN");
+		return $this->conn->begin();
 	}
 
 	/** Commit transaction
-	* @return Result|bool
+	* @return bool
 	*/
 	function commit() {
-		return queries("COMMIT");
+		remember_query("COMMIT");
+		return $this->conn->commit();
 	}
 
 	/** Rollback transaction
-	* @return Result|bool
+	* @return bool
 	*/
 	function rollback() {
-		return queries("ROLLBACK");
+		remember_query("ROLLBACK");
+		return $this->conn->rollback();
 	}
 
 	/** Return query with a timeout
@@ -279,11 +290,19 @@ abstract class SqlDriver {
 		return q($s);
 	}
 
-	/** Get type name of a result column
-	* @param \stdClass $field result of Result::fetch_field()
+	/** Get SQL computing the hexadecimal MD5 of a column, used to identify a row by a value too long for the URL
+	* @param Field $field
+	* @return string|void null if the column can't be hashed
+	*/
+	function md5(string $column, array $field) {
+	}
+
+	/** Get type name of a result column in the same vocabulary as Field::type
+	* @param ResultField $field result of Result::fetch_field()
 	* @return string "" if unknown
 	*/
 	function typeName(\stdClass $field): string {
+		// the drivers whose extensions report something else override this method
 		return (isset($field->native_type) ? $field->native_type : "");
 	}
 
@@ -323,6 +342,16 @@ abstract class SqlDriver {
 	/** Check if C-style escapes are supported */
 	function hasCStyleEscapes(): bool {
 		return false;
+	}
+
+	/** Check whether found_rows() is only an estimate which should be recounted in small tables */
+	function hasEstimatedRows(): bool {
+		return false;
+	}
+
+	/** Check whether a database or schema belongs to the system */
+	function isSystem(string $db, string $schema = ""): bool {
+		return information_schema($db, $schema);
 	}
 
 	/** Get regular expression matching the start of a line comment; must not match an empty string */

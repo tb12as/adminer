@@ -2,17 +2,23 @@
 namespace Adminer;
 
 $PROCEDURE = ($_GET["name"] ?: $_GET["call"]);
-page_header(lang('Call') . ": " . h($PROCEDURE), $error);
-
 $routine_type = (isset($_GET["callf"]) ? "FUNCTION" : "PROCEDURE");
 $routine = routine($_GET["call"], $routine_type);
+
+page_header(lang('Call') . ": " . h($PROCEDURE), $error, "#routines", "", !$routine, (isset($_GET["callf"]) ? "" : doc_link(array( // a function is called by SELECT
+	'sql' => "call.html",
+	'pgsql' => "sql-call.html",
+	'cockroach' => "call",
+	'mssql' => "t-sql/language-elements/execute-transact-sql",
+))));
+
 $in = array();
 $out = array();
 foreach ($routine["fields"] as $i => $field) {
 	if (substr($field["inout"], -3) == "OUT" && JUSH == 'sql') {
 		$out[$i] = "@" . idf_escape($field["field"]) . " AS " . idf_escape($field["field"]);
 	}
-	if (!$field["inout"] || substr($field["inout"], 0, 2) == "IN") {
+	if (!$field["inout"] || preg_match('~^(IN|OUTPUT)~', $field["inout"])) { // T-SQL accepts a constant for an OUTPUT parameter, it only doesn't return the value
 		$in[] = $i;
 	}
 }
@@ -37,7 +43,11 @@ if (!$error && $_POST) {
 		}
 	}
 
-	$query = (isset($_GET["callf"]) ? "SELECT " : "CALL ") . (idx($routine["returns"], "type") == "record" ? "* FROM " : "") . table($PROCEDURE) . "(" . implode(", ", $call) . ")";
+	$args = implode(", ", $call);
+	$query = (isset($_GET["callf"]) || JUSH != "mssql"
+		? (isset($_GET["callf"]) ? "SELECT " : "CALL ") . (idx($routine["returns"], "type") == "record" ? "* FROM " : "") . table($PROCEDURE) . "($args)"
+		: "EXEC " . table($PROCEDURE) . ($args != "" ? " $args" : "") // T-SQL calls a procedure by EXEC without parentheses
+	);
 	$start = microtime(true);
 	$result = connection()->multi_query($query);
 	$affected = connection()->affected_rows; // getting warnings overwrites this

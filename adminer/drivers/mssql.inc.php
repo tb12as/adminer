@@ -15,7 +15,7 @@ if (isset($_GET["mssql"])) {
 	if (extension_loaded("sqlsrv") && $_GET["ext"] != "pdo") {
 		class Db extends SqlDb {
 			public $extension = "sqlsrv";
-			private $link, $result, $warnings;
+			private $link, $result, $warnings, $transaction = false;
 
 			private function get_error(): void {
 				$this->error = "";
@@ -28,7 +28,10 @@ if (isset($_GET["mssql"])) {
 
 			function attach(array $server, string $username, string $password): string {
 				sqlsrv_configure("WarningsReturnAsErrors", 0); // a message from the server would stop sqlsrv_next_result(), e.g. between the result sets of sp_helpdb
-				$connection_info = array("UID" => $username, "PWD" => $password, "CharacterSet" => "UTF-8");
+				$connection_info = array("UID" => $username, "PWD" => $password, "CharacterSet" => "UTF-8", "ReturnDatesAsStrings" => true); // DateTime would lose fractional seconds and the offset
+				if (isset($_GET["sql"]) && !self::$instance) {
+					$connection_info["MultipleActiveResultSets"] = false; // MARS rolls back BEGIN TRANSACTION after each command, other pages and explain() need it
+				}
 				$ssl = adminer()->connectSsl();
 				if (isset($ssl["Encrypt"])) {
 					$connection_info["Encrypt"] = $ssl["Encrypt"];
@@ -52,8 +55,7 @@ if (isset($_GET["mssql"])) {
 			}
 
 			function quote(string $string): string {
-				$unicode = strlen($string) != strlen(utf8_decode($string));
-				return ($unicode ? "N" : "") . "'" . str_replace("'", "''", $string) . "'";
+				return unicode_prefix($string) . "'" . str_replace("'", "''", $string) . "'";
 			}
 
 			function select_db(string $database) {
@@ -118,6 +120,39 @@ if (isset($_GET["mssql"])) {
 				}
 				return $return;
 			}
+
+			function inTransaction(): bool {
+				return $this->transaction || (isset($_GET["sql"]) && get_val("SELECT @@TRANCOUNT", 0, $this)); // the extension doesn't know about BEGIN TRANSACTION typed in SQL command
+			}
+
+			function begin(): bool {
+				$this->transaction = sqlsrv_begin_transaction($this->link); // BEGIN TRANSACTION sent as a separate query is rolled back at the end of its batch under MARS enabled by default
+				if (!$this->transaction) {
+					$this->get_error();
+				}
+				return $this->transaction;
+			}
+
+			function commit(): bool {
+				if ($this->transaction && !sqlsrv_commit($this->link)) { // the API refuses to commit a transaction not started by it
+					$this->get_error();
+					return false;
+				}
+				$this->transaction = false;
+				return true;
+			}
+
+			function rollback(): bool {
+				if (!$this->transaction && isset($_GET["sql"])) {
+					return !!$this->query("IF @@TRANCOUNT > 0 ROLLBACK"); // BEGIN TRANSACTION typed in SQL command
+				}
+				if ($this->transaction && !sqlsrv_rollback($this->link)) {
+					$this->get_error();
+					return false;
+				}
+				$this->transaction = false;
+				return true;
+			}
 		}
 
 		class Result {
@@ -129,34 +164,31 @@ if (isset($_GET["mssql"])) {
 				// $this->num_rows = sqlsrv_num_rows($result); // available only in scrollable results
 			}
 
-			private function convert($row) {
-				foreach ((array) $row as $key => $val) {
-					if (is_a($val, 'DateTime')) {
-						$row[$key] = $val->format("Y-m-d H:i:s");
-					}
-					//! stream
-				}
-				return $row;
-			}
-
 			function fetch_assoc() {
-				return $this->convert(sqlsrv_fetch_array($this->result, SQLSRV_FETCH_ASSOC));
+				return sqlsrv_fetch_array($this->result, SQLSRV_FETCH_ASSOC);
 			}
 
 			function fetch_row() {
-				return $this->convert(sqlsrv_fetch_array($this->result, SQLSRV_FETCH_NUMERIC));
+				return sqlsrv_fetch_array($this->result, SQLSRV_FETCH_NUMERIC);
 			}
 
 			function fetch_field(): \stdClass {
 				if (!$this->fields) {
 					$this->fields = sqlsrv_field_metadata($this->result);
 				}
+				// ODBC type codes, https://learn.microsoft.com/sql/odbc/reference/appendixes/sql-data-types
+				$types = array(
+					-155 => "datetimeoffset", "time",
+					-152 => "xml", "varbinary", "sql_variant", // -151 - geometry, geography and hierarchyid are returned as binary
+					-11 => "uniqueidentifier", "ntext", "nvarchar", "nchar", "bit", "tinyint", "bigint", "image", "varbinary", "binary", "text",
+					1 => "char", "numeric", "decimal", "int", "smallint", "float", "real", "float",
+					12 => "varchar",
+					91 => "date", "time", "datetime",
+				);
 				$field = $this->fields[$this->offset++];
 				$return = new \stdClass;
 				$return->name = $field["Name"];
-				$return->type = ($field["Type"] == 1 ? 254 : 15);
-				//! $return->native_type: http://msdn.microsoft.com/en-us/library/cc296197.aspx
-				$return->charsetnr = (in_array($field["Type"], array(-2, -3, -4)) ? 63 : 0); // SQL_BINARY, SQL_VARBINARY, SQL_LONGVARBINARY
+				$return->native_type = idx($types, $field["Type"], "");
 				return $return;
 			}
 
@@ -180,6 +212,10 @@ if (isset($_GET["mssql"])) {
 
 	} else {
 		abstract class MssqlDb extends PdoDb {
+			function quote(string $string): string {
+				return unicode_prefix($string) . parent::quote($string);
+			}
+
 			function select_db(string $database) {
 				// database selection is separated from the connection so dbname in DSN can't be used
 				return $this->query(use_sql($database));
@@ -187,6 +223,15 @@ if (isset($_GET["mssql"])) {
 
 			function lastInsertId() {
 				return $this->pdo->lastInsertId();
+			}
+
+			function inTransaction(): bool {
+				// PDO knows only the transactions started by it, not BEGIN TRANSACTION typed in SQL command
+				return parent::inTransaction() || (isset($_GET["sql"]) && get_val("SELECT @@TRANCOUNT"));
+			}
+
+			function rollback(): bool {
+				return (parent::inTransaction() || !isset($_GET["sql"]) ? parent::rollback() : !!$this->query("IF @@TRANCOUNT > 0 ROLLBACK"));
 			}
 
 			/** Get the messages printed by the current result set
@@ -216,7 +261,8 @@ if (isset($_GET["mssql"])) {
 
 				function attach(array $server, string $username, string $password): string {
 					$port = $server["port"];
-					$dsn = "sqlsrv:Server=$server[host]" . ($port ? ",$port" : "");
+					$dsn = "sqlsrv:Server=$server[host]" . ($port ? ",$port" : "")
+						. (isset($_GET["sql"]) && !self::$instance ? ";MultipleActiveResultSets=0" : ""); // the same as in SQLSRV
 					$ssl = adminer()->connectSsl();
 					foreach (array("Encrypt", "TrustServerCertificate") as $key) {
 						if (isset($ssl[$key])) {
@@ -235,7 +281,15 @@ if (isset($_GET["mssql"])) {
 				function attach(array $server, string $username, string $password): string {
 					$port = $server["port"];
 					$socket = $server["socket"];
-					return $this->dsn("dblib:charset=utf8;host=$server[host]" . ($port != "" ? ";port=$port" : ($socket != "" ? ";unix_socket=$socket" : "")), $username, $password);
+					$options = array(1002 => true); // 1002 - PDO::DBLIB_ATTR_STRINGIFY_UNIQUEIDENTIFIER available since PHP 7.0, without it uniqueidentifier is returned as 16 raw bytes
+					$return = $this->dsn("dblib:charset=utf8;host=$server[host]" . ($port != "" ? ";port=$port" : ($socket != "" ? ";unix_socket=$socket" : "")), $username, $password, $options);
+					if (!$return) {
+						// DB-Library turns these options off, a generated column or an indexed view can't be created without them
+						$this->query("SET ANSI_NULLS, QUOTED_IDENTIFIER, CONCAT_NULL_YIELDS_NULL, ANSI_WARNINGS, ANSI_PADDING ON");
+						// the extension doesn't support PDO::ATTR_SERVER_VERSION; SERVERPROPERTY() returns sql_variant, which it reads as an empty string
+						$this->server_info = get_val("SELECT CAST(SERVERPROPERTY('ProductVersion') AS varchar(20))", 0, $this);
+					}
+					return $return;
 				}
 			}
 		}
@@ -258,11 +312,12 @@ if (isset($_GET["mssql"])) {
 		public $grouping = array("avg", "count", "count distinct", "max", "min", "sum");
 		public $generated = array("PERSISTED", "VIRTUAL");
 		public $onActions = "NO ACTION|CASCADE|SET NULL|SET DEFAULT";
+		public $inout = "|OUTPUT"; // T-SQL has no keyword for an input parameter
 
 		/** @var list<string> */ private $unknownTypes = array(); // types of the server which Adminer doesn't know, they are offered without a group
 
 		function operators(?array $tableStatus): array {
-			return array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL");
+			return array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "BETWEEN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL");
 		}
 
 		static function connect(string $server, string $username, string $password) {
@@ -279,7 +334,7 @@ if (isset($_GET["mssql"])) {
 					"tinyint" => 3, "smallint" => 5, "int" => 10, "bigint" => 20, "bit" => 1, "decimal" => 0, "numeric" => 0,
 					"real" => 12, "float" => 53, "smallmoney" => 10, "money" => 20, "vector" => 0,
 				),
-				lang('Date and time') => array("date" => 10, "smalldatetime" => 19, "datetime" => 19, "datetime2" => 19, "time" => 8, "datetimeoffset" => 26),
+				lang('Date and time') => array("date" => 10, "smalldatetime" => 19, "datetime" => 23, "datetime2" => 19, "time" => 8, "datetimeoffset" => 26),
 				lang('Strings') => array(
 					"char" => 8000, "varchar" => 8000, "text" => 2147483647, "nchar" => 4000, "nvarchar" => 4000, "ntext" => 1073741823,
 					"uniqueidentifier" => 36, "xml" => 2147483647, "json" => 2147483647, "sql_variant" => 8000, "hierarchyid" => 892,
@@ -311,6 +366,11 @@ if (isset($_GET["mssql"])) {
 
 		function structuredTypes(): array {
 			return array_merge(parent::structuredTypes(), $this->unknownTypes);
+		}
+
+		function typeName(\stdClass $field): string {
+			// PDO_SQLSRV reports the MS SQL type in sqlsrv:decl_type, its native_type is always "string"
+			return idx((array) $field, 'sqlsrv:decl_type', parent::typeName($field));
 		}
 
 		function insertUpdate(string $table, array $rows, array $primary) {
@@ -355,7 +415,8 @@ if (isset($_GET["mssql"])) {
 		}
 
 		function begin() {
-			return queries("BEGIN TRANSACTION");
+			remember_query("BEGIN TRANSACTION");
+			return $this->conn->begin();
 		}
 
 		function convertSearch(string $idf, array $val, array $field): string {
@@ -391,9 +452,22 @@ if (isset($_GET["mssql"])) {
 				return "relational-databases/system-$link" . preg_replace('~_~', '-', strtolower($name)) . "-transact-sql";
 			}
 		}
+
+		function isSystem(string $db, string $schema = ""): bool {
+			return ($schema != ""
+				// the fixed schemas present in every database, dbo is the default user schema
+				? information_schema($db, $schema) || preg_match('~^(guest|db_(owner|accessadmin|securityadmin|ddladmin|backupoperator|(deny)?data(reader|writer)))$~', $schema)
+				: in_array($db, array("master", "tempdb", "model", "msdb"))
+			);
+		}
 	}
 
 
+
+	/** Get the N prefix of a string literal holding a non-ASCII character */
+	function unicode_prefix(string $string): string {
+		return (strlen($string) != utf8_length($string) ? "N" : ""); // the prefix is not used always because comparing a varchar column with an nvarchar value prevents using an index
+	}
 
 	function idf_escape(string $idf): string {
 		return "[" . str_replace("]", "]]", $idf) . "]";
@@ -473,6 +547,20 @@ WHERE schema_id = SCHEMA_ID(" . q(get_schema()) . ") AND type IN ('S', 'U', 'V')
 		return true;
 	}
 
+	/** Get the length of a column or of a routine parameter */
+	function type_length(string $type, array $row): string {
+		return (preg_match("~char|binary~", $type)
+			? ($row["max_length"] == -1 ? "max" : intval($row["max_length"]) / ($type[0] == 'n' ? 2 : 1)) // -1 - varchar(max), the other types report it too
+			: ($type == "decimal"
+				? "$row[precision],$row[scale]"
+				: (preg_match('~^(datetime2|datetimeoffset|time)$~', $type)
+					? $row["scale"] // the number of fractional seconds digits, 7 by default
+					: ($type == "vector" ? (intval($row["max_length"]) - 8) / 4 : "") // a dimension takes 4 bytes, the header 8
+				)
+			)
+		);
+	}
+
 	function fields(string $table): array {
 		$comments = get_key_vals("SELECT objname, cast(value as varchar(max)) FROM fn_listextendedproperty('MS_DESCRIPTION', 'schema', " . q(get_schema())
 			. ", 'table', " . q($table) . ", 'column', NULL)");
@@ -491,24 +579,21 @@ LEFT JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_
 WHERE c.object_id = " . q($table_id)) as $row
 		) {
 			$type = $row["type"];
-			$length = (preg_match("~char|binary~", $type)
-				? intval($row["max_length"]) / ($type[0] == 'n' ? 2 : 1)
-				: ($type == "decimal"
-					? "$row[precision],$row[scale]"
-					: ($type == "vector" ? (intval($row["max_length"]) - 8) / 4 : "") // a dimension takes 4 bytes, the header 8
-				)
-			);
+			$length = type_length($type, $row);
 			$return[$row["name"]] = array(
 				"field" => $row["name"],
-				"full_type" => $type . ($length ? "($length)" : ""),
+				"full_type" => $type . ($length != "" ? "($length)" : ""),
 				"type" => $type,
 				"length" => $length,
-				"default" => (preg_match("~^\('(.*)'\)$~", $row["default"], $match) ? str_replace("''", "'", $match[1]) : $row["default"]),
+				"default" => (preg_match("~^\(N?'(.*)'\)$~s", $row["default"], $match) ? str_replace("''", "'", $match[1]) : $row["default"]),
 				"default_constraint" => $row["default_constraint"],
 				"null" => $row["is_nullable"],
 				"auto_increment" => $row["is_identity"],
 				"collation" => $row["collation_name"],
-				"privileges" => array("insert" => 1, "select" => 1, "update" => 1, "where" => 1, "order" => 1),
+				"privileges" => ($type == "timestamp" // rowversion can't be inserted or updated
+					? array("select" => 1, "where" => 1, "order" => 1)
+					: array("insert" => 1, "select" => 1, "update" => 1, "where" => 1, "order" => 1)
+				),
 				"primary" => $row["is_primary_key"],
 				"comment" => $comments[$row["name"]],
 			);
@@ -740,7 +825,7 @@ WHERE s.xtype = 'TR' AND s.name = " . q($name)
 		if ($return) {
 			$return["Statement"] = preg_replace('~^.+\s+AS\s+~isU', '', $return["text"]); //! identifiers, comments
 		}
-		return $return;
+		return ($return ?: array());
 	}
 
 	function triggers(string $table): array {
@@ -768,6 +853,64 @@ WHERE sys1.xtype = 'TR' AND sys2.name = " . q($table)) as $row
 		);
 	}
 
+	function routine(string $name, string $type): array {
+		// sys.sql_modules holds the whole definition, syscomments and INFORMATION_SCHEMA.ROUTINES truncate it to 4000 characters
+		$definition = get_val("SELECT m.definition
+FROM sys.objects o
+JOIN sys.sql_modules m ON m.object_id = o.object_id
+WHERE o.schema_id = SCHEMA_ID(" . q(get_schema()) . ") AND o.name = " . q($name) . " AND o.type = " . q($type == "PROCEDURE" ? "P" : "FN"));
+		if (!$definition) { // the definition is NULL if the routine is created WITH ENCRYPTION
+			return array();
+		}
+		$return = array("definition" => preg_replace('~^(?:[^[]|\[[^]]*])*\s+AS\s+~isU', '', $definition), "fields" => array()); //! comments
+		foreach (
+			get_rows("SELECT p.name, TYPE_NAME(p.user_type_id) [type], p.max_length, p.precision, p.scale, p.is_output
+FROM sys.parameters p
+JOIN sys.objects o ON p.object_id = o.object_id
+WHERE o.schema_id = SCHEMA_ID(" . q(get_schema()) . ") AND o.name = " . q($name) . "
+ORDER BY p.parameter_id") as $row
+		) {
+			$field_type = $row["type"];
+			$length = type_length($field_type, $row);
+			$field = array(
+				"field" => preg_replace('~^@~', '', $row["name"]), // the parameters are prefixed by @
+				"type" => $field_type,
+				"length" => $length,
+				"full_type" => $field_type . ($length != "" ? "($length)" : ""),
+				"null" => true,
+				"inout" => ($row["is_output"] ? "OUTPUT" : ""),
+			);
+			if ($field["field"] == "") {
+				$return["returns"] = $field; // the return value of a function has no name
+			} else {
+				$return["fields"][] = $field;
+			}
+		}
+		return $return;
+	}
+
+	function routines(): array {
+		// the other routines, e.g. table-valued functions, can't be expressed by the form
+		return get_rows("SELECT o.name SPECIFIC_NAME, o.name ROUTINE_NAME,
+	CASE o.type WHEN 'P' THEN 'PROCEDURE' ELSE 'FUNCTION' END ROUTINE_TYPE, TYPE_NAME(p.user_type_id) DTD_IDENTIFIER
+FROM sys.objects o
+LEFT JOIN sys.parameters p ON o.object_id = p.object_id AND p.parameter_id = 0
+WHERE o.schema_id = SCHEMA_ID(" . q(get_schema()) . ") AND o.type IN ('P', 'FN')
+ORDER BY o.name");
+	}
+
+	function routine_languages(): array {
+		return array(); // T-SQL routines have no LANGUAGE clause
+	}
+
+	function routine_options(string $routine): array {
+		return array(); // the characteristics are a part of the header stripped by routine()
+	}
+
+	function routine_id(string $name, array $row): string {
+		return table($name); // routines are not overloaded
+	}
+
 	function schemas(): array {
 		return get_vals("SELECT name FROM sys.schemas");
 	}
@@ -781,7 +924,8 @@ WHERE sys1.xtype = 'TR' AND sys2.name = " . q($table)) as $row
 
 	function set_schema(string $schema, ?Db $connection2 = null): bool {
 		$_GET["ns"] = $schema;
-		return true; // ALTER USER is permanent
+		// the default schema is not changed because ALTER USER is permanent, the schema is only checked
+		return !!get_val("SELECT 1 FROM sys.schemas WHERE name = " . q($schema), 0, $connection2);
 	}
 
 	function create_sql(string $table, ?bool $auto_increment, string $style): string {
@@ -830,6 +974,17 @@ WHERE sys1.xtype = 'TR' AND sys2.name = " . q($table)) as $row
 		return "USE " . idf_escape($database);
 	}
 
+	/** Get SQL commands creating the exported schema
+	* @param 'DROP+CREATE'|'CREATE' $style
+	*/
+	function use_schema_sql(string $schema, string $style): string {
+		// there is nothing like search_path to select the schema, the names are qualified
+		// CREATE SCHEMA must be the only command in a batch and it has no IF NOT EXISTS, dbo exists always
+		$name = idf_escape($schema);
+		return ($style == "DROP+CREATE" ? "DROP SCHEMA IF EXISTS $name;\n" : "")
+			. "IF SCHEMA_ID(" . q($schema) . ") IS NULL EXEC(" . q("CREATE SCHEMA $name") . ")";
+	}
+
 	function trigger_sql(string $table): string {
 		$return = "";
 		foreach (triggers($table) as $name => $trigger) {
@@ -846,6 +1001,6 @@ WHERE sys1.xtype = 'TR' AND sys2.name = " . q($table)) as $row
 	}
 
 	function support(string $feature): bool {
-		return preg_match('~^(check|comment|columns|database|drop_col|dump|fast_status|indexes|descidx|scheme|sql|table|transaction_ddl|trigger|view|view_trigger)$~', $feature); //! routine|
+		return preg_match('~^(check|comment|columns|database|drop_col|dump|fast_status|indexes|descidx|procedure|routine|scheme|sql|table|transaction_ddl|trigger|view|view_trigger)$~', $feature);
 	}
 }

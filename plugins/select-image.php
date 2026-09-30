@@ -19,12 +19,31 @@ class AdminerSelectImage extends Adminer\Plugin {
 	}
 
 	protected $translations = array(
-		'en' => array(
-			'%d byte(s)' => array('%d byte', '%d bytes'),
-		),
 		'cs' => array(
 			'' => 'Zobrazí obrázky ve výpisu',
 			'%d byte(s)' => array('%d bajt', '%d bajty', '%d bajtů'),
+		),
+		'de' => array(
+			'' => 'Zeigt Bilder im Select an', // Claude Opus 5
+		),
+		'en' => array(
+			'%d byte(s)' => array('%d byte', '%d bytes'),
+		),
+		'ja' => array(
+			'' => '一覧に画像を表示', // Claude Opus 5
+		),
+		'pl' => array(
+			'' => 'Wyświetla obrazy w wyniku', // Claude Opus 5
+		),
+		'ro' => array(
+			'' => 'Afișează imaginile în select', // Claude Opus 5
+		),
+		'sk' => array(
+			'' => 'Zobrazí obrázky vo výpise', // Claude Opus 5
+		),
+		'zh' => array(
+			'' => '在选择数据时显示图片', // Claude Opus 5
+			'%d byte(s)' => '%d 字节', // Claude Opus 5
 		),
 	);
 }

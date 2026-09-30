@@ -34,6 +34,57 @@ They are always wrapped (e.g., `fields[col]`), which requires escaping the name 
 
 Adminer often checks for empty strings using `$table != ""` instead of `!$table`, since table names can be `0`, and `!$table` would fail in such cases.
 
+## Driver Capabilities
+
+A driver announces which features it supports by `support()`, called with one of these keys:
+
+- `check` - CHECK constraints on the table structure page
+- `columns` - columns can be defined when creating and altering a table
+- `comment` - comments of tables and columns
+- `copy` - copying a table including its data
+- `cursor` - rows are paged by a cursor so the number of the following rows is unknown (Redis, SimpleDB)
+- `database` - creating, altering and dropping databases
+- `deferrable` - deferrable foreign keys (PostgreSQL)
+- `descidx` - descending index columns
+- `drop_col` - dropping a column
+- `dump` - export in the SQL format
+- `event` - scheduled events (MySQL)
+- `extension` - installed extensions (PostgreSQL)
+- `fast_status` - table_status() is cheap so the table list is printed at once instead of by a background request
+- `indexes` - listing and altering indexes
+- `kill` - killing a process or a slow query
+- `materializedview` - materialized views (PostgreSQL)
+- `move_col` - a column can be added in the middle of a table
+- `partial_indexes` - index condition (PostgreSQL)
+- `privileges` - the Privileges page
+- `procedure` - procedures in addition to functions
+- `processlist` - the Process list page
+- `routine` - stored functions
+- `scheme` - schemas inside a database
+- `sequence` - sequences (PostgreSQL)
+- `single_db` - there is only one database so the user is taken to it and the database select is not printed (Elasticsearch)
+- `single_table` - there is only one table in each database so the user is taken to it (Redis)
+- `sql` - the SQL command page and running multiple queries
+- `status` - the Status page
+- `table` - tables have a fixed structure, other drivers just select all columns
+- `transaction_ddl` - DDL is transactional so an object can be dropped and recreated atomically
+- `trigger` - triggers of tables
+- `type` - user defined types (PostgreSQL)
+- `variables` - the Variables page
+- `view` - creating, altering and dropping views
+- `view_trigger` - triggers of views (SQLite, MS SQL)
+
+Other capabilities are declared by defining an optional driver function, detected by `function_exists()`:
+- `alter_table()` - creating and altering tables
+- `db_status()` - sizes of the whole database at once (SQLite)
+- `drop_sql()` - the export drops all tables at the beginning (PostgreSQL)
+- `drop_tables()` - dropping the selected tables
+- `foreign_keys_sql()` - the export adds foreign keys after creating all tables
+- `move_tables()` - moving the selected tables to another database
+- `truncate_all_sql()` - the export truncates all tables by a single command (PostgreSQL)
+- `truncate_tables()` - truncating the selected tables
+- `use_schema_sql()` - the export creates and selects the schema (PostgreSQL, MS SQL)
+
 ## Classes, Functions, Variables, Constants
 
 There are 4 main classes: `Driver`, `Db`, `Adminer` and `Plugins`.
@@ -266,6 +317,9 @@ It is dynamically typed, `x'...'` is a value and not a type specific literal, so
 `select_value()` shows the display side of the same distinction.
 It calls `value()`, then replaces a value failing `is_utf8()` by `"\0"` so that it can't break the page, and `selectVal()` prints the number of bytes instead.
 
+A column of a result of a query written by the user has no `Field`, so [print_select_result()](/adminer/include/editing.inc.php) asks the same questions through `Driver::typeName()`.
+`Result::fetch_field()` reports the name used by the database in `native_type` and a driver overrides `typeName()` when its extensions report something else - MySQLi the type numbers of the protocol, PDO the names of its own dialect.
+
 ## Minimalism
 
 Adminer is minimalist in every aspect - if something is unnecessary, it should not be included.
@@ -405,9 +459,10 @@ The website translations are managed at https://www.adminer.org/en/translations/
 
 Adminer’s source code is divided into a manageable number of reasonably small files.
 For simpler deployment, these files are bundled into a single `*.php` file by inlining `include` files.
-Static files (`*.js`, `*.css`) are also inlined and served via the `?file=` route.
+Static files (`*.js`, `*.css`, images) are also inlined and served via the `?file=` route.
+Their URL contains the version with a checksum of the files, e.g. `?file=functions.js&version=6.1.0-dev+1a2b3c4d`, so each build has its own URL, even a `-dev` one.
 They are sent with a year-long expiration but some hosts forbid caching anything their interface generates, so a service worker ([`worker.js`](/adminer/static/worker.js)) keeps them in the Cache Storage, which those headers don't reach.
-It is registered only by the compiled version and unregistered after the last logout.
+It is registered only by the compiled version and unregistered after the last logout, the development version unregisters it on every page in case a compiled version was served from the same URL.
 
 Includes in Adminer start with `./` to bypass `include_path`, which is unrelated to compilation.
 

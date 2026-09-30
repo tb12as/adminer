@@ -11,10 +11,10 @@ if (adminer()->homepage()) {
 	}
 	echo "<div class='scrollable'>\n";
 	echo "<table class='nowrap checkable odds'" . on('click', 'tableClick') . on('dblclick', 'tableClick') . ">\n";
-	echo '<thead><tr class="wrap">';
+	echo '<thead><tr>';
 	echo '<td class="hover"><input id="check-all" type="checkbox" class="jsonly"' . on('click', 'formCheck', '^tables\[') . '>';
 	echo '<th>' . lang('Table');
-	echo '<td>' . lang('Rows');
+	echo '<th>' . lang('Rows');
 	echo "<tbody>\n";
 
 	foreach (table_status() as $table => $row) {

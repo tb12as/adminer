@@ -32,6 +32,7 @@ Lang::$translations = array(
 	'Language' => 'Jazyk',
 	'Invalid CSRF token. Submit the form again.' => 'Neplatný token CSRF. Odešlete formulář znovu.',
 	'If you did not send this request from Adminer, close this page.' => 'Pokud jste tento požadavek neposlali z Admineru, tak tuto stránku zavřete.',
+	'Not found.' => 'Nenalezeno.',
 	'No extension' => 'Žádné rozšíření',
 	'None of the supported PHP extensions (%s) are available.' => 'Není dostupné žádné z podporovaných PHP rozšíření (%s).',
 	'Connecting to privileged ports is not allowed.' => 'Připojování k privilegovaným portům není povoleno.',
@@ -92,6 +93,8 @@ Lang::$translations = array(
 	'You can upload a large SQL file via FTP and import it from the server.' => 'Velký SQL soubor můžete nahrát pomocí FTP a importovat ho ze serveru.',
 	'You are offline.' => 'Jste offline.',
 	'Menu' => 'Menu',
+	'Documentation' => 'Dokumentace',
+	'Database management in a single PHP file' => 'Správa databáze v jednom PHP souboru',
 
 	'Export' => 'Export',
 	'Output' => 'Výstup',
@@ -102,9 +105,9 @@ Lang::$translations = array(
 
 	'Database' => 'Databáze',
 	'DB' => 'DB',
+	'System%s' => 'Systémové%s', // group of system databases or schemas in the menu, %s is always empty
 	'Use' => 'Vybrat',
 	'Select database' => 'Vybrat databázi',
-	'Invalid database.' => 'Neplatná databáze.',
 	'Database has been dropped.' => 'Databáze byla odstraněna.',
 	'Databases have been dropped.' => 'Databáze byly odstraněny.',
 	'Database has been created.' => 'Databáze byla vytvořena.',
@@ -264,7 +267,7 @@ Lang::$translations = array(
 	'Text length' => 'Délka textů',
 	'Action' => 'Akce',
 	'Full table scan' => 'Průchod celé tabulky',
-	'Unable to select the table' => 'Nepodařilo se vypsat tabulku',
+	'Unable to select the table.' => 'Nepodařilo se vypsat tabulku.',
 	'No rows.' => 'Žádné řádky.',
 	'%d / ' => '%d / ',
 	'%d row(s)' => array('%d řádek', '%d řádky', '%d řádků'),
@@ -315,6 +318,7 @@ Lang::$translations = array(
 	'Relations' => 'Vztahy',
 
 	'Editor' => 'Editor',
+	'Data editing in a single PHP file' => 'Editace dat v jednom PHP souboru',
 	'$1-$3-$5' => '$6.$4.$1', // date format in Editor: $1 yyyy, $2 yy, $3 mm, $4 m, $5 dd, $6 d
 	'[yyyy]-mm-dd' => 'd.m.[rrrr]', // hint for date format - use language equivalents for day, month and year shortcuts
 	'HH:MM:SS' => 'HH:MM:SS', // hint for time format - use language equivalents for hour, minute and second shortcuts
@@ -332,7 +336,6 @@ Lang::$translations = array(
 	'Schema has been created.' => 'Schéma bylo vytvořeno.',
 	'Schema has been altered.' => 'Schéma bylo změněno.',
 	'Schema' => 'Schéma',
-	'Invalid schema.' => 'Neplatné schéma.',
 
 	// PostgreSQL sequences support
 	'Sequences' => 'Sekvence',
@@ -349,6 +352,10 @@ Lang::$translations = array(
 	'Type has been created.' => 'Typ byl vytvořen.',
 	'Type has been altered.' => 'Typ byl změněn.',
 	'Alter type' => 'Pozměnit typ',
+
+	// PostgreSQL extensions
+	'Extensions' => 'Rozšíření',
+	'Version' => 'Verze',
 
 	// Table check constraints
 	'Checks' => 'Kontroly',

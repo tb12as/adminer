@@ -1,14 +1,117 @@
 ## Adminer dev
+- Select: Quote again the quoted values of IN
+- Select: Accept the unquoted values of IN in parentheses (bug #1350, regression from 6.0.1)
+- Select: Edit the stored value by Ctrl+click on a non-original value (bug #1344)
+- Select: Search by BETWEEN (bug #1346)
 - Select: Navigate and edit rows with the keyboard (j/k, Enter, x, e) and turn pages with [ and ]
+- Export: Print the error also in CSV
+- Login: Report invalid credentials for a wrong password required by Adminer\Password (bug #1351)
+- MySQL, SQLite: Search by & (bug #1346)
+- IGDB, SimpleDB: Fix export of nested values
+- Editor: Offer the row with the typed ID first when searching a foreign key, fix the search in MS SQL and Oracle
+### Plugins
+- Method formatSizeValue() to format the sizes of tables, indexes and databases
+
+## Adminer 6.1.1 (released 2026-09-25)
+- Fix editing identity (PostgreSQL, Oracle, Firebird), rowversion (MS SQL), key (ClickHouse)
+- Select: Fix modifying rows with a NULL value (uncompiled only, regression from 6.1.0)
+- Edit: Do not round big numbers in json (MySQL) and jsonb (PostgreSQL) when saving the row (regression from 5.4.2)
+- DB overview: Keep the table names on the screen when scrolling the list of tables horizontally
+- Select: Keep the checkboxes on the screen when scrolling horizontally
+- Select: Enable saving the modified values again after an error (regression from 6.0.0)
+- Select: Highlight the searched text
+- Select: Search anywhere by IS NULL and IS NOT NULL without a value
+- Show documentation links as 📖, link it from the heading
+- Menu: Group system databases and schemas
+- Trigger: Name a new trigger with more events by all of them
+- PDO: Preserve the exact value of double (bug #1214)
+- PostgreSQL, MS SQL, Oracle: Do not highlight a valid date or time value as too long
+- PostgreSQL: Alter the trigger function from table structure
+- PostgreSQL: Do not highlight an array value as too long
+- PostgreSQL: Fix renaming a column and making it a foreign key at the same time
+- PostgreSQL: Export and alter the default values of enum and array columns (bug #1342)
+- PostgreSQL: Edit the enum values containing an apostrophe
+- PostgreSQL: Alter table: Offer and quote the user types with uppercase letters
+- SQLite: Disallow ATTACH and VACUUM INTO prefixed by BOM (GHSA-r9r5-j5q8-8c59)
+- SQLite: Deny writing files by an authorizer (PHP 8.0+, PDO PHP 8.5+)
+- MS SQL: Export and alter the precision of datetime2, time and datetimeoffset
+- MS SQL: Keep fractional seconds and the time zone offset when saving a row with the sqlsrv extension
+- MS SQL Dblib: Display uniqueidentifier (bug #1339)
+- MS SQL Dblib: Show the server version
+- MS SQL Dblib: Fix creating generated columns and indexed views
+- MS SQL Dblib: SQL command: Rollback an unfinished transaction
+- Oracle: Treat SYS and SYSTEM as read-only
+- Oracle: Support identity columns
+- Oracle: Alter timestamp and interval columns, display their type without a duplicate precision
+- ClickHouse: Offer the geometry types, Time and Time64, group the types as in the other drivers
+- ClickHouse: Display the number of rows to a read-only user
+- ClickHouse: Shorten the links to rows with a long string or geometry by its MD5 hash
+- ClickHouse: Do not round big integers and decimals, e.g. UInt64 or Decimal128, display empty maps and maps with numeric keys as objects
+- ClickHouse: Save the decimals in Array, Map and Tuple exactly, save a Map with other than String keys
+- ClickHouse: Do not turn \b into a backspace (regression from 6.0.0)
+- Editor: Describe foreign keys by the first string column, not only varchar
+- Editor: Shorten long descriptions of foreign keys
+### Plugins
+- Driver plugins: Driver::disconnect() to forget the logged user
+- Driver plugins: Connect to the privileged ports of the driver's own protocol (ClickHouse, Elasticsearch, IMAP)
+- Driver plugins: Driver::hasEstimatedRows() to recount the rows only after an estimate
+- Driver plugins: Driver::md5() to shorten the links to rows with a long value
+- Driver plugins: Driver::isSystem() to group the system databases and schemas
+- Method namePattern() to customize the names of new indexes, foreign keys, checks and triggers
+- Plugin igdb: Log in by the client secret instead of an access token obtained manually
+- New plugin select-foreign: Display the first string column of the referenced row instead of a foreign key value, same as in Adminer Editor
+- New plugin name-patterns: Name new indexes, foreign keys, checks and triggers by your own convention
+
+## Adminer 6.1.0 (released 2026-09-14)
+- Send the form by the default button by Ctrl+Enter
+- Display the message on the screen when AJAX-saving
+- Install Adminer as a web-application
+- Report an object which doesn't exist instead of printing an empty form
+- Link the database in the breadcrumb of a routine, sequence, type or event to its section
+- Don't serve the cached static files of a different build of the same version
+- Select: Handle columns with a name looking like a function, e.g. NOW()
+- Select: Don't link COUNT(*) if a function is applied to a grouped column
+- SQL command: Modify the values in the result by Ctrl+click (bug #1333)
+- SQL command: Fix the edit links of a table joined more than once
+- SQL command: Display the values in the result according to their type in all drivers
+- Export: Allow exporting schema or qualify all names by it
+- Export: Fix exporting objects of more schemas at once
+- MySQL: Remove the definer of an exported view or event only if it is the current account, the same as in routines
+- MySQL: Display the account matched by the connection as the logged user
+- PostgreSQL: Display and edit PostGIS geometries as EWKT (bug SF-615)
+- PostgreSQL: Do not link the types created by extensions from the table structure
+- PostgreSQL: Display the installed extensions on the database page
+- PostgreSQL, MS SQL: Report a schema which doesn't exist
+- CockroachDB: Export: Omit WITH (oids = false)
+- CockroachDB: Treat crdb_internal and pg_extension as read-only system schemas
+- CockroachDB: Link its documentation
+- MS SQL: Display, create, alter, drop and call procedures and functions
+- MS SQL: Fix the length of a varchar(max) column
+- MS SQL: Fix the default value written with the 'N' prefix
+- MS SQL PDO: Prefix Unicode strings with 'N'
+- MS SQL, Oracle: Fix transactions, e.g. a failed import or modification of more rows
+- MS SQL: SQL command: Keep a transaction between the commands
+- Oracle: The driver is no longer beta
 - Oracle: Use schemas as databases instead of tablespaces (bug SF-204, SF-212, SF-238)
 - Oracle: Create and drop databases (bug SF-246)
 - Oracle: Display, create, alter and drop triggers (bug SF-385)
 - Oracle: Display and edit geometries as well-known text instead of empty (bug SF-610, SF-615)
+- Oracle: Accept and display dates in the ISO format (bug SF-770)
+- Oracle: Fix foreign keys over multiple columns
 - Oracle: Fix creating a column with a default value
 - Oracle: Fix the default value displayed with the quotes around it
+### Plugins
+- Driver plugins: Result::fetch_field() reports the type name in native_type instead of the MySQL number in type and charsetnr
+- Driver plugins: Db::begin(), commit() and rollback() to use the transaction API of the extension
+- Method manifest() to customize or disable the web app manifest
+- Method verifyLoginToken() to accept the login form of another website
+- Method explain() to customize EXPLAIN in SQL command
 ### Internal
 - Test Oracle
+- Run the end-to-end tests of different drivers in parallel by `composer e2e -- --workers=N`
 - Distribute the tests in the release archive (bug #1332)
+- Show the review status of the translations in adminer/lang/README.md
+- Unregister the service worker in the development version served from the URL of a compiled version
 
 ## Adminer 6.0.2 (released 2026-09-07)
 - Verify all parts of the server name before connecting (GHSA-rwxg-xph9-82cj, regression from 5.5.1)
@@ -184,7 +287,7 @@
 - PostgreSQL: Show composite, domain and range types next to enums
 - PostgreSQL: Alter and rename user defined types
 - PostgreSQL: Add values to an enum type without re-creating it
-- PostgreSQL: Export all user defined types, fix exporting enum values containing an apostrophe
+- PostgreSQL: Export all user defined types, fix exporting enum values containing an apostrophe (bug SF-587)
 - PostgreSQL: Drop all tables at once in export so that foreign keys, views and types don't prevent the drop
 - PostgreSQL: Drop the selected tables at once so that foreign keys don't prevent the drop
 - PostgreSQL: Export materialized views with their indexes, they were exported as plain views
@@ -231,10 +334,10 @@
 - Plugin login-ip: Allow localhost by default, require the request to not be proxied if X-Forwarded-For prefixes are not specified
 - Plugin login-password-less: Allow the plugin password to be also the password of some server
 - Plugin menu-links: Add option to show the select link and other repeated links only on hover
-- New plugin: Create a table from an imported CSV file
-- New plugin: Display images in select, same as in Adminer Editor
-- New plugin: Log in only by a passkey holding the passwords
-- New plugin: Warn by a red strip if Adminer or the database doesn't run on the local machine
+- New plugin import-csv: Create a table from an imported CSV file
+- New plugin select-image: Display images in select, same as in Adminer Editor
+- New plugin login-passkey: Log in only by a passkey holding the passwords
+- New plugin remote-color: Warn by a red strip if Adminer or the database doesn't run on the local machine
 ### Internal
 - Register JavaScript event handlers by a data attribute instead of a script element
 - Register the event handlers in functions.js instead of an inline script
@@ -294,8 +397,8 @@
 - SQLite: Disable editing of sqlite_schema
 - MS SQL: Fix multiple result sets (bug #1180)
 ### Plugins
-- New plugin: Redis driver
-- New plugin: Login behind a reverse proxy
+- New plugin redis: Redis driver
+- New plugin login-reverse-proxy: Login behind a reverse proxy
 
 ## Adminer 5.4.4 (released 2026-07-11)
 - Fix blob editing (bug #1251, regression from 5.4.2)
@@ -322,7 +425,7 @@
 - Escape REQUEST_URI (GHSA-c533-9qwm-8w5h, bug #1298)
 - Validate server (GHSA-r4x9-5m63-3vxw)
 - Validate server version (GHSA-h6jr-7pr6-grgj)
-- SQLite: Disallow ATTACH commands (GHSA-q4f2-39gr-45jh)
+- SQLite: Disallow ATTACH commands (GHSA-3582-q6xq-5vf7)
 - SQLite: Disallow VACUUM INTO commands (GHSA-gmx3-g29w-77wf)
 - SQLite: Check filename before deleting (GHSA-6pg3-chwq-wgqc)
 - Avoid unserialize() in brute force protection (bug #1289)
@@ -370,7 +473,7 @@
 ### Plugins
 - Methods showVariables() and showStatus() (bug #1157)
 - Allow to be in any namespace
-- New plugin: IGDB driver
+- New plugin igdb: IGDB driver
 
 ## Adminer 5.4.1 (released 2025-09-26)
 - SQL command: Unlink NULL primary keys
@@ -410,8 +513,8 @@
 - Elasticsearch: Support dropping aliases
 ### Plugins
 - Methods afterConnect(), processList() and killProcess()
-- New plugin: Display row numbers in select (bug #1106)
-- New plugin: Specify query timeout
+- New plugin row-numbers: Display row numbers in select (bug #1106)
+- New plugin timeout: Specify query timeout
 
 ## Adminer 5.3.0 (released 2025-05-04)
 - Align numeric functions right
@@ -452,9 +555,9 @@
 ### Plugins
 - Support translations by extending Adminer\Plugin
 - Editor: Move mass sending e-mails to a plugin
-- New plugin: Configure options by end-users and store them to a cookie
-- New plugin: Configure menu table links
-- New plugin: Set up driver, server and database in Adminer Editor
+- New plugin config: Configure options by end-users and store them to a cookie
+- New plugin menu-links: Configure menu table links
+- New plugin editor-setup: Set up driver, server and database in Adminer Editor
 
 ## Adminer 5.1.1 (released 2025-04-02)
 - Export: Fix tar (regression from 5.0.3)
@@ -465,8 +568,8 @@
 - CSS: Invert icons in dark mode
 ### Plugins
 - Allow changing CSP by more plugins
-- New plugin: Use Monaco Editor for syntax highlighting
-- New plugin: Use Prism for syntax highlighting
+- New plugin highlight-monaco: Use Monaco Editor for syntax highlighting
+- New plugin highlight-prism: Use Prism for syntax highlighting
 ### Internal
 - Describe array shapes in doc-comments by the PHPStan syntax
 - Declare parameter, return and property types in the code instead of the @param tag
@@ -503,12 +606,12 @@
 - Autoload plugins from adminer-plugins/
 - Configure plugins with adminer-plugins.php
 - Display loaded plugins in server overview
-- New plugin: AI prompt in SQL command generating the queries with Google Gemini
-- New plugin: Verify new versions from GitHub
-- New plugin: IMAP driver created for fun
-- New plugin: Display links to tables referencing current row
-- New plugin: Allow switching light and dark mode (bug #926)
-- New plugin: Confirm before unloading page with changed form
+- New plugin sql-gemini: AI prompt in SQL command generating the queries with Google Gemini
+- New plugin version-github: Verify new versions from GitHub
+- New plugin imap: IMAP driver created for fun
+- New plugin backward-keys: Display links to tables referencing current row
+- New plugin dark-switcher: Allow switching light and dark mode (bug #926)
+- New plugin before-unload: Confirm before unloading page with changed form
 ### Internal
 - Modernize JavaScript: let and const instead of var, arrow functions, for...of, classList
 - Report E_NOTICE and E_STRICT except accessing an undefined array element
@@ -527,7 +630,7 @@
 - Designs named adminer-dark.css use dark basic style
 ### Plugins
 - Add method syntaxHighlighting()
-- New plugin: Use Codemirror 5 for syntax highlighting and SQL with typeahead
+- New plugin highlight-codemirror: Use Codemirror 5 for syntax highlighting and SQL with typeahead
 ### Internal
 - Move PhpShrink to a separate repository
 

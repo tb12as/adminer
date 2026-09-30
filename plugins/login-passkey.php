@@ -374,5 +374,34 @@ if (window.isSecureContext && window.PublicKeyCredential && window.crypto && cry
 			'The accounts cannot be decrypted by this passkey.' => 'Touto passkey se přístupy nepodařilo dešifrovat.',
 			'Log in with the passkey.' => 'Přihlaste se pomocí passkey.',
 		),
+		'de' => array(
+			'' => 'Anmeldung nur mit einem Passkey, der die Passwörter enthält', // Claude Opus 5
+		),
+		'ja' => array(
+			'' => 'パスワードを保存したパスキーでのみログイン', // Claude Opus 5
+		),
+		'pl' => array(
+			'' => 'Logowanie wyłącznie za pomocą passkey przechowującego hasła', // Claude Opus 5
+		),
+		'ro' => array(
+			'' => 'Autentificare doar cu un passkey care conține parolele', // Claude Opus 5
+		),
+		'sk' => array(
+			'' => 'Prihlásenie iba pomocou passkey, ktorý obsahuje heslá', // Claude Opus 5
+		),
+		'zh' => array(
+			'' => '仅使用保存了密码的通行密钥登录', // Claude Opus 5
+			'Log in with the passkey.' => '使用通行密钥登录。', // Claude Opus 5
+			'The passkey does not support storing passwords.' => '此通行密钥不支持保存密码。', // Claude Opus 5
+			'The accounts cannot be decrypted by this passkey.' => '无法用此通行密钥解密这些账号。', // Claude Opus 5
+			'This browser does not support passkeys.' => '此浏览器不支持通行密钥。', // Claude Opus 5
+			'Unlock with passkey' => '用通行密钥解锁', // Claude Opus 5
+			'Set up passkey' => '设置通行密钥', // Claude Opus 5
+			'Passkeys require HTTPS and JavaScript.' => '通行密钥需要 HTTPS 和 JavaScript。', // Claude Opus 5
+			'Fill in the login form and add it to the passkey.' => '填写登录表单并将其添加到通行密钥。', // Claude Opus 5
+			'Label' => '标签', // Claude Opus 5
+			'Add to passkey' => '添加到通行密钥', // Claude Opus 5
+			'Add this line to %s:' => '把这一行添加到 %s：', // Claude Opus 5
+		),
 	);
 }

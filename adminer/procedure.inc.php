@@ -13,14 +13,15 @@ if ($_POST && !process_fields($row["fields"]) && !$error) {
 		}
 	}
 
-	$old_id = routine_id($PROCEDURE, routine($_GET["procedure"], $routine));
+	$old_routine = routine($_GET["procedure"], $routine);
+	$old_id = ($old_routine ? routine_id($PROCEDURE, $old_routine) : ""); // there's no old routine when creating one
 	$new_id = routine_id($row["name"], $row);
 	$create = create_routine($routine, $row);
 	$location = substr(ME, 0, -1);
 	$message = lang('Routine has been altered.');
 
 	if (!$_POST["drop"] && $old_id == $new_id && connection()->flavor != "mysql") {
-		query_redirect(substr_replace($create, ' OR REPLACE', 6, 0), $location, $message); // 6 - strlen('CREATE')
+		queries_redirect($location, $message, queries(substr_replace($create, (JUSH == "mssql" ? ' OR ALTER' : ' OR REPLACE'), 6, 0))); // 6 - strlen('CREATE')
 	} else {
 		$temp_name = "adminer_" . uniqid();
 		drop_create(
@@ -39,18 +40,34 @@ if ($_POST && !process_fields($row["fields"]) && !$error) {
 	}
 }
 
-page_header(($PROCEDURE != ""
-	? (isset($_GET["function"]) ? lang('Alter function') : lang('Alter procedure')) . ": " . h($PROCEDURE)
-	: (isset($_GET["function"]) ? lang('Create function') : lang('Create procedure'))
-), $error);
+$not_found = false;
+if (!$_POST && $PROCEDURE != "") {
+	$row = routine($_GET["procedure"], $routine);
+	$not_found = !$row;
+	$row["name"] = $PROCEDURE;
+}
 
-if (!$_POST) {
-	if ($PROCEDURE == "") {
-		$row["language"] = "sql";
-	} else {
-		$row = routine($_GET["procedure"], $routine);
-		$row["name"] = $PROCEDURE;
-	}
+$routine_lower = strtolower($routine);
+page_header(
+	($PROCEDURE != ""
+		? (isset($_GET["function"]) ? lang('Alter function') : lang('Alter procedure')) . ": " . h($PROCEDURE)
+		: (isset($_GET["function"]) ? lang('Create function') : lang('Create procedure'))
+	),
+	$error,
+	"#routines",
+	"",
+	$not_found,
+	doc_link(array(
+		'sql' => "create-procedure.html", // the same page documents CREATE FUNCTION
+		'mariadb' => "create-$routine_lower/",
+		'pgsql' => "sql-create$routine_lower.html",
+		'cockroach' => "create-$routine_lower",
+		'mssql' => "t-sql/statements/create-$routine_lower-transact-sql",
+	))
+);
+
+if (!$_POST && $PROCEDURE == "") {
+	$row["language"] = "sql";
 }
 
 $collations = (JUSH == "sql" ? flat_collations() : array()); // other drivers don't support collation in routine parameters
@@ -64,11 +81,6 @@ echo ($collations ? "<datalist id='collations'>" . optionlist($collations) . "</
 	. html_select("language", array_keys($routine_languages), $row["language"], on('change', 'routineLanguage', $routine_languages))
 	. "</label>\n" : ""); ?>
 <input type='submit' value='<?php echo lang('Save'); ?>'>
-<?php echo doc_link(array(
-	'sql' => "create-procedure.html", // the same page documents CREATE FUNCTION
-	'mariadb' => ($routine == "FUNCTION" ? "create-function/" : "create-procedure/"),
-	'pgsql' => ($routine == "FUNCTION" ? "sql-createfunction.html" : "sql-createprocedure.html"),
-), "?"); ?>
 <div class="scrollable">
 <table id="edit-fields" class="nowrap">
 <?php
@@ -90,7 +102,6 @@ if (isset($_GET["function"])) {
 <?php
 $routine_options = routine_options($routine);
 if ($routine_options) {
-	$row["options"] = (array) $row["options"];
 	$options_visible = false;
 	foreach ($routine_options as $key => $values) {
 		$default = ($values ? reset($values) : "");

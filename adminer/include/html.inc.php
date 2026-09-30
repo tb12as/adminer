@@ -111,8 +111,28 @@ function optionlist($options, $selected = null, bool $use_keys = false): string 
 	return $return;
 }
 
+/** Move system databases or schemas to an optgroup
+* @param list<string> $names
+* @return array<string|list<string>>
+*/
+function group_system(array $names, bool $schemas = false): array {
+	$return = array();
+	$system = array();
+	foreach ($names as $name) {
+		if ($schemas ? driver()->isSystem(DB, $name) : driver()->isSystem($name)) {
+			$system[] = $name;
+		} else {
+			$return[] = $name;
+		}
+	}
+	if ($system) {
+		$return[lang('System%s', '')] = $system; // %s only distinguishes the key from 'System' in the login form
+	}
+	return $return;
+}
+
 /** Generate HTML <select>
-* @param string[] $options
+* @param string[]|string[][] $options
 */
 function html_select(string $name, array $options, ?string $value = "", string $attrs = "", string $labelled_by = ""): string {
 	static $label = 0;
@@ -261,12 +281,12 @@ function file_input(string $attrs, string $rest = ""): string {
 * @param string|string[]|false|null $value false means original value
 */
 function enum_input(string $type, string $attrs, array $field, $value, string $empty = ""): string {
-	preg_match_all("~'((?:[^']|'')*)'~", $field["length"], $matches);
+	preg_match_all("~" . driver()->enumLength . "~", $field["length"], $matches);
 	$prefix = ($field["type"] == "enum" ? "val-" : "");
 	$checked = (is_array($value) ? in_array("null", $value) : $value === null);
 	$return = ($field["null"] && $prefix ? "<label><input type='$type'$attrs value='null'" . ($checked ? " checked" : "") . "><i>$empty</i></label>" : "");
-	foreach ($matches[1] as $val) {
-		$val = stripcslashes(str_replace("''", "'", $val));
+	foreach ($matches[0] as $val) {
+		$val = stripcslashes(idf_unescape($val));
 		$checked = (is_array($value) ? in_array($prefix . $val, $value) : $value === $val);
 		$return .= " <label><input type='$type'$attrs value='" . h($prefix . $val) . "'" . ($checked ? ' checked' : '') . '>' . h(adminer()->editVal($val, $field)) . '</label>';
 	}
@@ -293,9 +313,9 @@ function input(array $field, $value, ?string $function, ?bool $autofocus = false
 	// don't re-format the string sent by the user, it would discard the invalid value when re-printing the form after an error
 	if ($json && $value != '' && (JUSH != "pgsql" || $field["type"] != "json") && (is_array($value) || !$_POST["save"])) {
 		// 128 - JSON_PRETTY_PRINT, 64 - JSON_UNESCAPED_SLASHES, 256 - JSON_UNESCAPED_UNICODE available since PHP 5.4
-		$value = json_encode(is_array($value) ? $value : json_decode($value), 128 | 64 | 256);
+		$value = (is_array($value) ? json_encode($value, 128 | 64 | 256) : json_encode_exact(json_decode_exact($value), 128 | 64 | 256)); // json_decode() would round e.g. big integers
 	}
-	$reset = (JUSH == "mssql" && $update && $field["auto_increment"]); // MS SQL doesn't allow updating an identity column
+	$reset = ($update && is_identity_always($field));
 	if ($reset && !$_POST["save"]) {
 		$function = null;
 	}
@@ -344,9 +364,13 @@ function input(array $field, $value, ?string $function, ?bool $autofocus = false
 		} else {
 			$types = driver()->types();
 			$type_length = $types[$field["type"]];
-			if (preg_match('~date|time|year~', $field["type"])) {
+			$array = preg_match('~\[]~', $field["full_type"]);
+			if ($array) {
+				$maxlength = 0; // an array value is not limited by the length of its elements
+			} elseif (preg_match('~date|time|year~', $field["type"])) {
 				// the length of a temporal type is the number of fractional seconds digits, not of characters
-				$fraction = (preg_match('~time~', $field["type"]) && preg_match('~^\d+$~', $field["length"]) ? $field["length"] + 1 : 0); // 1 - decimal point
+				$precision = ($field["length"] == "" && JUSH == "pgsql" ? 6 : $field["length"]); // PostgreSQL stores microseconds by default
+				$fraction = (preg_match('~time~', $field["type"]) && preg_match('~^[1-9]\d*$~', $precision) ? $precision + 1 : 0); // 1 - decimal point
 				$maxlength = ($type_length ? $type_length + $fraction : 0);
 			} elseif (!preg_match('~int|vector~', $field["type"]) && preg_match('~^(\d+)(,(\d+))?$~', $field["length"], $match)) { // int(3) and vector(3) don't limit the length of the value
 				$maxlength = (preg_match("~binary~", $field["type"]) ? 2 : 1) * $match[1] + ($match[3] ? 1 : 0) + ($match[2] && !$field["unsigned"] ? 1 : 0);
@@ -355,7 +379,7 @@ function input(array $field, $value, ?string $function, ?bool $autofocus = false
 			}
 			// type='date' and type='time' display localized value which may be confusing, type='datetime' uses 'T' as date and time separator
 			echo "<input"
-				. ((!$has_function || $function === "") && preg_match('~^' . int_type() . '$~', $field["type"]) && !preg_match('~\[]~', $field["full_type"]) ? " type='number'" : "")
+				. ((!$has_function || $function === "") && preg_match('~^' . int_type() . '$~', $field["type"]) && !$array ? " type='number'" : "")
 				. " value='" . h($value) . "'" . ($maxlength ? " data-maxlength='$maxlength'" : "")
 				. (preg_match('~char|binary~', $field["type"]) && $maxlength > 20 ? " size='" . ($maxlength > 99 ? 60 : 40) . "'" : "")
 				. "$attrs>"
@@ -584,16 +608,39 @@ function repeat_pattern(string $pattern, int $length): string {
 }
 
 /** Shorten UTF-8 string
+* @param list<string> $patterns regular expressions to highlight in the shortened string
 * @return string escaped string with appended ...
 */
-function shorten_utf8(string $string, int $length = 80, string $suffix = ""): string {
+function shorten_utf8(string $string, int $length = 80, string $suffix = "", array $patterns = array()): string {
 	if (!preg_match("(^(" . repeat_pattern("[\t\r\n -\x{10FFFF}]", $length) . ")($)?)u", $string, $match)) { // ~s causes trash in $match[2] under some PHP versions, (.|\n) is slow
 		preg_match("(^(" . repeat_pattern("[\t\r\n -~]", $length) . ")($)?)", $string, $match);
 	}
-	return (isset($match[2])
-		? h($match[1]) . $suffix // the whole string fits
-		: h(preg_replace('~\n[^\n]*\z~', "\n", $match[1])) . "$suffix<i>…</i>" // in a multi-line text, the ellipsis stands for the whole last line
-	);
+	$length = strlen(isset($match[2]) ? $match[1] : preg_replace('~\n[^\n]*\z~', "\n", $match[1])); // in a multi-line text, the ellipsis stands for the whole last line
+	return highlight_matches($string, $patterns, $length) . $suffix . (isset($match[2]) ? "" : "<i>…</i>");
+}
+
+/** Escape HTML and wrap the parts matching any of the regular expressions in <mark>
+* @param list<string> $patterns regular expressions without delimiters, e.g. (?i:abc)
+* @param ?int $length print only this many bytes, the matches crossing the end are highlighted up to it
+*/
+function highlight_matches(string $string, array $patterns, ?int $length = null): string {
+	if ($length === null) {
+		$length = strlen($string);
+	}
+	$return = "";
+	$pos = 0;
+	// (?| - the groups of each regular expression are numbered from 1 for its back-references; @ - the regular expression typed by the user can be invalid
+	if ($patterns && @preg_match_all("((?|" . implode("|", $patterns) . "))su", $string, $matches, PREG_OFFSET_CAPTURE)) { //! highlights only the first overlapping pattern
+		foreach ($matches[0] as $match) {
+			list($text, $start) = $match;
+			if ($text != "" && $start < $length) { // an empty match, e.g. of a*, is skipped
+				$end = min($start + strlen($text), $length);
+				$return .= h(substr($string, $pos, $start - $pos)) . "<mark>" . h(substr($string, $start, $end - $start)) . "</mark>";
+				$pos = $end;
+			}
+		}
+	}
+	return $return . h(substr($string, $pos, $length - $pos));
 }
 
 /** Get button with icon */

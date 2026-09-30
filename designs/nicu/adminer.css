@@ -156,9 +156,6 @@ input.required {
 td.nowrap {
     white-space: pre;
 }
-.wrap td {
-    white-space: normal;
-}
 .error {
     color: red;
     background: #fee;
@@ -417,6 +414,7 @@ td.nowrap {
 .jush-htm_com,
 .jush-com,
 .jush-com_code,
+.jush-com_nest,
 .jush-one,
 .jush-php_doc,
 .jush-php_com,

@@ -84,6 +84,19 @@ function text_type(): string {
 	return 'char|text' . (JUSH == "sql" ? '|enum|set' : '');
 }
 
+/** Check whether the type is a user type, e.g. an enum in PostgreSQL */
+function is_user_type(string $type): bool {
+	return in_array($type, idx(driver()->structuredTypes(), lang('User types'), array()));
+}
+
+/** Get full type for SQL with a quoted user type
+* @param Field $field
+*/
+function full_type_sql(array $field): string {
+	$type = $field["type"];
+	return (is_user_type($type) ? idf_escape($type) . substr($field["full_type"], strlen($type)) : $field["full_type"]);
+}
+
 /** Check whether it makes sense to search the field for the value when searching in all columns
 * @param Field $field
 * @param array{op: string, val: string} $val
@@ -91,6 +104,9 @@ function text_type(): string {
 function is_searchable(array $field, array $val): bool {
 	if (!isset($field["privileges"]["where"])) {
 		return false;
+	}
+	if (preg_match('~NULL$~', $val["op"])) {
+		return true; // the value is not used
 	}
 	$type = $field["type"];
 	$search = $val["val"];
@@ -105,7 +121,14 @@ function is_searchable(array $field, array $val): bool {
 	}
 	if (preg_match(number_type(), $type)) {
 		$number = '-?\d+(\.\d+)?';
-		return (bool) preg_match('~^' . $number . (preg_match('~IN$~', $val["op"]) ? "( *, *$number)*" : '') . '$~', $search);
+		$more = '';
+		if (preg_match('~IN$~', $val["op"])) {
+			$search = preg_replace('~^\s*\(\s*(.*?)\s*\)\s*$~s', '\1', $search); // the parentheses are optional
+			$more = "( *, *$number)*";
+		} elseif ($val["op"] == "BETWEEN") {
+			$more = "\\s+AND\\s+$number";
+		}
+		return (bool) preg_match('~^' . $number . $more . '$~i', $search);
 	}
 	if (preg_match('~^(small)?date|^timestamp~', $type)) {
 		return (bool) preg_match('~^\d+-\d+-\d+~', $search);
@@ -181,9 +204,10 @@ function charset(Db $connection): string {
 }
 
 /** Set PHP ini value if ini_set() is not disabled
+* @param string|int|float|bool|null $value
 * @return string|false false on failure
 */
-function ini_set(string $option, string $value) {
+function ini_set(string $option, $value) {
 	return (function_exists('ini_set') ? \ini_set($option, $value) : false);
 }
 
@@ -338,23 +362,26 @@ function unique_array(?array $row, array $indexes) {
 	}
 }
 
-/** Escape column key used in where() */
-function escape_key(string $key): string {
-	if (preg_match('(^([\w(]+)(' . str_replace("_", ".*", preg_quote(idf_escape("_"))) . ')([ \w)]+)$)', $key, $match)) { //! columns looking like functions
-		return $match[1] . idf_escape(idf_unescape($match[2])) . $match[3]; //! SQL injection
+/** Apply a function sent in the URL to a column identifier, ignore an unsupported function
+* @param string $column escaped column identifier
+* @param Field $field
+*/
+function where_function(?string $fun, string $column, array $field): string {
+	if ($fun == "md5") { // used for values too long for the URL
+		return driver()->md5($column, $field) ?: $column; // $column as for the other unknown functions
 	}
-	return idf_escape($key);
+	return (in_array($fun, driver()->functions) || in_array($fun, driver()->grouping) ? apply_sql_function($fun, $column) : $column);
 }
 
 /** Create SQL condition from parsed query string
-* @param array{where:string[], null:list<string>} $where parsed query string
+* @param array{where:string[], null:list<string>, fun:string[], col:string[], val:string[]} $where parsed query string
 * @param Field[] $fields
 */
 function where(array $where, array $fields = array()): string {
 	$return = array();
 	foreach ((array) $where["where"] as $key => $val) {
 		$key = bracket_escape($key, true); // true - back
-		$column = escape_key($key);
+		$column = idf_escape($key);
 		$field = idx($fields, $key, array());
 		$field_type = $field["type"];
 		$is_binary = $field && (is_blob($field) || preg_match('~binary~', $field_type));
@@ -371,7 +398,14 @@ function where(array $where, array $fields = array()): string {
 		}
 	}
 	foreach ((array) $where["null"] as $key) {
-		$return[] = escape_key($key) . " IS NULL";
+		$return[] = idf_escape($key) . " IS NULL";
+	}
+	// a condition with a function is indexed, the same column can be selected with two functions
+	foreach ((array) $where["col"] as $i => $col) {
+		$val = idx($where["val"], $i); // null if the value is NULL, the function is applied to the column in both cases
+		$return[] = where_function(idx($where["fun"], $i), idf_escape($col), idx($fields, $col, array()))
+			. ($val !== null ? " = " . q($val) : " IS NULL")
+		;
 	}
 	return implode(" AND ", $return);
 }
@@ -381,21 +415,20 @@ function where(array $where, array $fields = array()): string {
 * @return array<string, bool> keys are column names
 * @uses $_GET["where"]
 * @uses $_GET["null"]
+* @uses $_GET["col"]
 */
 function where_columns(array $fields): array {
 	$return = array();
 	foreach ((array) $_GET["null"] as $key) {
 		$return[$key] = true;
 	}
-	foreach ((array) $_GET["where"] as $key => $val) {
-		$key = bracket_escape($key, true); // true - back
-		foreach ($fields as $name => $field) {
-			if ($key == $name || strpos($key, idf_escape($name)) !== false) { // e.g. MD5(`name`) is used for long values
-				$return[$name] = true;
-			}
-		}
+	foreach (array_keys((array) $_GET["where"]) as $key) {
+		$return[bracket_escape($key, true)] = true; // true - back
 	}
-	return $return;
+	foreach ((array) $_GET["col"] as $col) {
+		$return[$col] = true;
+	}
+	return array_intersect_key($return, $fields); // the URL can contain a non-existent column
 }
 
 /** Create SQL condition from query string
@@ -480,6 +513,31 @@ function get_url(string $url, $context): array {
 		(array) $headers,
 		($return === false ? implode("\n", $errors) : ''),
 	);
+}
+
+/** Decode JSON like json_decode() but keep the text of the numbers which a float would round
+* @return mixed pass a scalar to json_scalar() and the rest to json_encode_exact()
+*/
+function json_decode_exact(string $json) {
+	// a number is decoded as a string beginning with U+0001, a string beginning with U+0001 gets another one
+	$json = preg_replace('~"(\\\\u0001(?:[^"\\\\]|\\\\.)*+")|"(?:[^"\\\\]|\\\\.)*+"(*SKIP)(*FAIL)~', '"\\\\u0001$1', $json);
+	return json_decode(preg_replace('~"(?:[^"\\\\]|\\\\.)*+"(*SKIP)(*FAIL)|-?\d[-+.\deE]*+~', '"\\\\u0001$0"', $json));
+}
+
+/** Get a scalar decoded by json_decode_exact(), a number as a string
+* @param scalar|null $val
+* @return scalar|null
+*/
+function json_scalar($val) {
+	return (is_string($val) && substr($val, 0, 1) == "\1" ? substr($val, 1) : $val);
+}
+
+/** Encode a value decoded by json_decode_exact() with the original text of the numbers
+* @param mixed $val
+*/
+function json_encode_exact($val, int $flags = 0): string {
+	// the string U+0001 + "1.5" is the number 1.5, U+0001 + U+0001 + "x" is the string U+0001 + "x"
+	return preg_replace('~"\\\\u0001(-?\d[^"\\\\]*)"|(")\\\\u0001(\\\\u0001(?:[^"\\\\]|\\\\.)*+")|"(?:[^"\\\\]|\\\\.)*+"(*SKIP)(*FAIL)~', '$1$2$3', json_encode($val, $flags));
 }
 
 /** Get settings stored in a cookie
@@ -606,15 +664,22 @@ class Queries {
 	static float $start = 0;
 }
 
+/** Remember query to print it by queries_redirect()
+* @param string $query end with ';' to use DELIMITER
+*/
+function remember_query(string $query): void {
+	if (!Queries::$start) {
+		Queries::$start = microtime(true);
+	}
+	Queries::$queries[] = (driver()->delimiter != ';' ? $query : (preg_match('~;$~', $query) ? "DELIMITER ;;\n$query;\nDELIMITER " : $query) . ";");
+}
+
 /** Execute and remember query
 * @param string $query end with ';' to use DELIMITER
 * @return Result|bool
 */
 function queries(string $query) {
-	if (!Queries::$start) {
-		Queries::$start = microtime(true);
-	}
-	Queries::$queries[] = (driver()->delimiter != ';' ? $query : (preg_match('~;$~', $query) ? "DELIMITER ;;\n$query;\nDELIMITER " : $query) . ";");
+	remember_query($query);
 	return connection()->query($query);
 }
 
@@ -728,6 +793,11 @@ function is_utf8(?string $val): bool {
 	return (preg_match('~~u', $val) && !preg_match('~[\0-\x8\xB\xC\xE-\x1F]~', $val));
 }
 
+/** Get the number of characters in a UTF-8 string */
+function utf8_length(string $val): int {
+	return strlen(preg_replace('~[\x80-\xBF]~', '', $val)); // the continuation bytes of a multi-byte character
+}
+
 /** Format decimal number
 * @param float|numeric-string $val
 */
@@ -753,7 +823,8 @@ function format_status(array $table_status, string $key): string {
 	}
 	// these engines estimate the number of rows, even 0 can be reported for a non-empty table
 	$approximate = ($key == "Rows" && (JUSH == "sqlite" || $table_status["Engine"] == (JUSH == "pgsql" ? "table" : "InnoDB")));
-	return ($approximate ? "~ " : "") . format_number($val);
+	$val = in_array($key, array("Data_length", "Index_length", "Data_free")) ? adminer()->formatSizeValue($val) : format_number($val);
+	return ($approximate ? "~ " : "") . $val;
 }
 
 /** Generate friendly URL */
@@ -950,9 +1021,10 @@ function rand_string(): string {
 * @param string|string[]|list<string[]> $val
 * @param array{type: string, full_type?: string} $field
 * @param ?numeric-string $text_length
+* @param list<string> $patterns regular expressions to highlight
 * @return string HTML
 */
-function select_value($val, string $link, array $field, ?string $text_length): string {
+function select_value($val, string $link, array $field, ?string $text_length, array $patterns = array()): string {
 	if (is_array($val)) {
 		$return = "";
 		if (array_filter($val, 'is_array') == array_values($val)) { // list of arrays
@@ -966,14 +1038,14 @@ function select_value($val, string $link, array $field, ?string $text_length): s
 			foreach ($val as $v) {
 				$return .= "<tr>";
 				foreach (array_merge($keys, $v) as $v2) {
-					$return .= "<td>" . select_value($v2, $link, $field, $text_length);
+					$return .= "<td>" . select_value($v2, $link, $field, $text_length, $patterns);
 				}
 			}
 		} else {
 			foreach ($val as $k => $v) {
 				$return .= "<tr>"
 					. ($val != array_values($val) ? "<th>" . h($k) : "")
-					. "<td>" . select_value($v, $link, $field, $text_length)
+					. "<td>" . select_value($v, $link, $field, $text_length, $patterns)
 				;
 			}
 		}
@@ -996,9 +1068,10 @@ function select_value($val, string $link, array $field, ?string $text_length): s
 		if (!is_utf8($return)) {
 			$return = "\0"; // htmlspecialchars of binary data returns an empty string
 		} elseif ($text_length != "" && is_shortable($field)) {
-			$return = shorten_utf8($return, max(0, +$text_length)); // usage of LEFT() would reduce traffic but complicate query - expected average speedup: .001 s VS .01 s on local network
+			// usage of LEFT() would reduce traffic but complicate query - expected average speedup: .001 s VS .01 s on local network
+			$return = shorten_utf8($return, max(0, +$text_length), "", $patterns);
 		} else {
-			$return = h($return);
+			$return = highlight_matches($return, $patterns);
 		}
 	}
 	return adminer()->selectVal($return, $link, $field, $val);
@@ -1010,6 +1083,13 @@ function select_value($val, string $link, array $field, ?string $text_length): s
 function is_blob(array $field): bool {
 	return preg_match('~blob|bytea|raw|file' . (JUSH == "mssql" ? '|binary|image' : '') . '~', $field["type"])
 		&& !in_array($field["type"], idx(driver()->structuredTypes(), lang('User types'), array()));
+}
+
+/** Check whether the field is an identity column which the database doesn't allow to update
+* @param Field $field
+*/
+function is_identity_always(array $field): bool {
+	return $field["auto_increment"] && (JUSH == "mssql" || $field["default"] == "GENERATED ALWAYS AS IDENTITY");
 }
 
 /** Check whether the string is e-mail address */

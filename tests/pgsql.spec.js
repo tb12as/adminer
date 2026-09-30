@@ -148,13 +148,19 @@ test('Materialized view', async () => {
 	await expect(page.locator('body')).toContainText('Materialized view');
 });
 
-test('Invalid table', async () => {
+test('Invalid object', async () => {
 	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&table=invalid');
-	await expect(page.locator('body')).toContainText('No tables.');
+	await expect(page.locator('body')).toContainText('Not found.');
 	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&create=invalid');
-	await expect(page.locator('body')).toContainText('No tables.');
+	await expect(page.locator('body')).toContainText('Not found.');
 	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&select=invalid');
-	await expect(page.locator('body')).toContainText('Unable to select the table:');
+	await expect(page.locator('body')).toContainText('Not found.');
+	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&foreign=albums&name=invalid');
+	await expect(page.locator('body')).toContainText('Not found.');
+	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&procedure=invalid');
+	await expect(page.locator('body')).toContainText('Not found.');
+	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=invalid');
+	await expect(page.locator('body')).toContainText('Not found.');
 });
 
 test('Schema', async () => {
@@ -178,7 +184,7 @@ test('Clone', async () => {
 	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&select=albums');
 	await page.locator('[name="check[]"]').click();
 	await page.locator('[name="clone"]').click();
-	await page.locator('[name="fields[title]"]').fill('Black and White');
+	await page.locator('[name="fields[title]"]').fill('Černobílá');
 	await button(page, 'Save').click();
 	await expect(page.locator('body')).toContainText('Item 3 has been inserted.');
 });
@@ -186,12 +192,12 @@ test('Clone', async () => {
 test('Pagination', async () => {
 	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&select=albums&order[0]=id&limit=1');
 	await expect(page.locator('body')).toContainText('Dangerous');
-	await expect(page.locator('body')).not.toContainText('Black and White');
+	await expect(page.locator('body')).not.toContainText('Černobílá');
 	await expect(page.locator('body')).toContainText('2 rows');
 	await link(page, 'Load more data').click(); // appends the next page by AJAX
-	await expect(page.locator('body')).toContainText('Black and White');
+	await expect(page.locator('body')).toContainText('Černobílá');
 	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&select=albums&order[0]=id&limit=1&page=last');
-	await expect(page.locator('body')).toContainText('Black and White');
+	await expect(page.locator('body')).toContainText('Černobílá');
 	await expect(page.locator('body')).not.toContainText('Dangerous');
 	await expect(page.locator("//fieldset[legend='Page']/b")).toHaveText('2'); // the current page, not a link
 });
@@ -301,6 +307,7 @@ test('Search in tables', async () => {
 	await page.locator('[name="search"]').click();
 	await link(page, 'interprets').click();
 	await expect(page.locator('body')).toContainText('Michael Jackson');
+	await expect(page.locator('#table mark').first()).toHaveText('Jackson');
 });
 
 test('Search in tables with special types', async () => {
@@ -311,10 +318,11 @@ test('Search in tables with special types', async () => {
 	await button(page, 'Execute').click();
 	await expect(page.locator('body')).toContainText('Query executed OK');
 	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public');
-	for (const [op, query] of [['LIKE %%', 'abc'], ['LIKE %%', '3'], ['=', 'abc3'], ['~', 'abc'], ['ILIKE %%', 'ABC']]) {
+	for (const [op, query] of [['LIKE %%', 'abc'], ['LIKE %%', '3'], ['=', 'abc3'], ['~', 'abc'], ['ILIKE %%', 'ABC'], ['BETWEEN', 'abc AND abd']]) {
 		await page.locator('[name="op"]').selectOption(op);
 		await page.locator('[name="query"]').fill(query);
 		await page.locator('[name="search"]').click();
+		await page.waitForLoadState();
 		await expect(page.locator('.error')).toHaveCount(0); // a column which can't be searched must be skipped, not reported
 		await expect(page.locator("li a[href*='select=types&where']")).toBeVisible(); // the list of the tables holding the value
 	}
@@ -322,6 +330,7 @@ test('Search in tables with special types', async () => {
 	for (const query of ['2020-01-03', '12:34:56', 'ěščř']) {
 		await page.locator('[name="query"]').fill(query);
 		await page.locator('[name="search"]').click();
+		await page.waitForLoadState();
 		await expect(page.locator('.error')).toHaveCount(0);
 	}
 	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&sql=' + encodeURIComponent('DROP TABLE types; DROP TYPE mood'));
@@ -400,6 +409,7 @@ test('Bulk table operations', async () => {
 		'CREATE SCHEMA adminer_test2; CREATE TABLE bulk_test (id int); INSERT INTO bulk_test VALUES (1)'
 	));
 	await button(page, 'Execute').click();
+	await page.waitForLoadState(); // the result is flushed while the queries run, navigating away earlier aborts them
 	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public');
 	// every operation redirects back to this page with the checkboxes cleared
 	for (const [name, label] of [['', 'Vacuum'], ['optimize', 'Optimize']]) {
@@ -458,10 +468,21 @@ test('Export', async () => {
 	await page.locator('[name="format"]').first().click();
 	await page.locator('[name="table_style"]').selectOption({label: 'DROP+CREATE'});
 	await page.locator('[name="data_style"]').selectOption({label: 'INSERT'});
+	await page.locator('[name="schema_style"]').selectOption({index: 0});
 	await button(page, 'Export').click();
 	await expect(page.locator('body')).toContainText('CREATE TABLE "public"."interprets"');
-	await expect(page.locator('body')).toContainText('INSERT INTO "interprets"');
+	await expect(page.locator('body')).toContainText('ON "public"."interprets" USING hash');
+	await expect(page.locator('body')).toContainText('INSERT INTO "public"."interprets"');
 	await expect(page.locator('body')).toContainText('VIEW "public"."albums_interprets"');
+	// the schema selected by search_path instead of qualifying the names
+	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&dump=');
+	await page.locator('[name="schema_style"]').selectOption({label: 'USE'});
+	await button(page, 'Export').click();
+	await expect(page.locator('body')).toContainText('SET search_path TO "public"');
+	await expect(page.locator('body')).toContainText('CREATE TABLE "interprets"');
+	await expect(page.locator('body')).toContainText('ON "interprets" USING hash');
+	await expect(page.locator('body')).toContainText('INSERT INTO "interprets"');
+	await expect(page.locator('body')).toContainText('VIEW "albums_interprets"');
 	// several tables in a non-SQL format are packed to a TAR archive built in a temporary file
 	await goto(page, '/adminer/?pgsql=&username=ODBC&db=adminer_test&ns=public&dump=');
 	await page.locator('input[name="output"][value="text"]').click();

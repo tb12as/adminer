@@ -26,11 +26,11 @@ test('Login', async () => {
 	await button(page, 'Login').click();
 	await expect(page.locator('body')).toContainText('Logged in as');
 	await goto(page, '/tests/plugins.php?username=ODBC&sql='
-		+ encodeURIComponent('DROP DATABASE IF EXISTS adminer_test; CREATE DATABASE adminer_test'));
+		+ encodeURIComponent('DROP DATABASE IF EXISTS adminer_plugins; CREATE DATABASE adminer_plugins'));
 	await button(page, 'Execute').click();
 	await expect(page.locator('body')).toContainText('Query executed OK');
 	// the tables are created by SQL, the structure itself is tested by mysql.spec.js
-	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_test&sql=' + encodeURIComponent(
+	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_plugins&sql=' + encodeURIComponent(
 		'CREATE TABLE interprets (id int PRIMARY KEY AUTO_INCREMENT, name varchar(50));'
 		+ ' CREATE TABLE albums (id int PRIMARY KEY AUTO_INCREMENT, interpret int, title varchar(50),'
 		+ ' FOREIGN KEY (interpret) REFERENCES interprets (id));'
@@ -42,10 +42,9 @@ test('Login', async () => {
 });
 
 test('Export formats', async () => {
-	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_test&dump=');
+	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_plugins&dump=');
 	// dumpFormat() and dumpOutput() are aggregated across all plugins, not stopped by the first one
 	await expect(page.locator('input[name="format"][value="json"]')).toHaveCount(1);
-	await expect(page.locator('input[name="format"][value="xml"]')).toHaveCount(1);
 	await expect(page.locator('input[name="output"][value="zip"]')).toHaveCount(1);
 	await page.locator('input[name="output"][value="text"]').click();
 	await page.locator('input[name="format"][value="json"]').click();
@@ -53,14 +52,10 @@ test('Export formats', async () => {
 	await button(page, 'Export').click();
 	await expect(page.locator('body')).toContainText('"albums": [');
 	await expect(page.locator('body')).toContainText('"title": "Dangerous"');
-	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_test&dump=');
-	await page.locator('input[name="format"][value="xml"]').click();
-	await button(page, 'Export').click();
-	await expect(page.locator('body')).toContainText('<database name="adminer_test">');
 });
 
 test('Import CSV', async () => {
-	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_test&import=');
+	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_plugins&import=');
 	await page.locator('[name="csv_file[]"]').setInputFiles({
 		name: 'singers.csv',
 		mimeType: 'text/csv',
@@ -68,18 +63,40 @@ test('Import CSV', async () => {
 	});
 	await page.locator('[name="csv_exists"]').selectOption('drop');
 	await page.locator('[name="csv"]').click(); // the plugin creates the table from the file
-	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_test&select=singers');
+	await expect(page.locator('body')).toContainText('Table has been created.'); // wait for the import before leaving the page, it failed in WebKit
+	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_plugins&select=singers');
 	await expect(page.locator('body')).toContainText('Karel Gott');
 });
 
 test('Edit foreign', async () => {
-	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_test&edit=albums');
-	// the plugin replaces the input by a list of the referenced values
+	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_plugins&edit=albums');
+	// the plugin replaces the input by a list of the referenced rows described by their first string column
 	await expect(page.locator('select[name="fields[interpret]"]')).toHaveCount(1);
-	await page.locator('[name="fields[interpret]"]').selectOption('1');
+	await page.locator('[name="fields[interpret]"]').selectOption({label: 'Michael Jackson'});
 	await page.locator('[name="fields[title]"]').fill('Bad');
 	await button(page, 'Save').click();
 	await expect(page.locator('body')).toContainText('Item 2 has been inserted.');
+});
+
+test('Backward keys', async () => {
+	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_plugins&select=interprets');
+	// the plugin links the rows of the tables referencing this row, the menu links the tables too
+	await page.locator('#table a[title="New item"]').click();
+	await expect(page.locator('[name="fields[interpret]"]')).toHaveValue('1');
+	await page.goBack();
+	await page.locator('#table').getByRole('link', {name: 'albums', exact: true}).click();
+	await expect(page.locator('body')).toContainText('Dangerous');
+});
+
+test('Tables filter', async () => {
+	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_plugins');
+	await page.locator('#filter-field').fill('alb'); // the list is filtered after a delay
+	await expect(page.locator('#tables li', {hasText: 'interprets'})).toBeHidden();
+	await expect(page.locator('#tables strong')).toHaveText('alb');
+	await goto(page, '/tests/plugins.php?username=ODBC&db=adminer_plugins&select=albums');
+	// the filter is restored from sessionStorage in the same database
+	await expect(page.locator('#filter-field')).toHaveValue('alb');
+	await expect(page.locator('#tables li', {hasText: 'interprets'})).toBeHidden();
 });
 
 test('Configuration', async () => {

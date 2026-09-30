@@ -5,14 +5,14 @@ namespace Adminer;
 
 /** Default Adminer plugin; it should call methods via adminer()->f() instead of $this->f() to give chance to other plugins */
 class Adminer {
-	/** @var Adminer|Plugins */ static $instance;
+	/** @var Adminer|Plugins|null */ static $instance;
 	/** @visibility protected(set) */ public string $error = ''; // HTML
 
 	/** Name in title and navigation
 	* @return string HTML code
 	*/
 	function name(): string {
-		return "<a href='https://www.adminer.org/'" . target_blank() . " id='h1'><img src='" . DIR . "static/logo.png' width='24' height='24' alt='' id='logo'>Adminer</a>";
+		return "<a href='https://www.adminer.org/'" . target_blank() . " id='h1'><img src='" . DIR . "static/logo.svg' width='24' height='24' alt='' id='logo'>Adminer</a>";
 	}
 
 	/** Connection parameters
@@ -38,6 +38,11 @@ class Adminer {
 	/** Return key used to group brute force attacks; behind a reverse proxy, you want to return the last part of X-Forwarded-For */
 	function bruteForceKey(): string {
 		return $_SERVER["REMOTE_ADDR"];
+	}
+
+	/** Decide whether to require the CSRF token when logging in, a form on another website doesn't have it */
+	function verifyLoginToken(): bool {
+		return true;
 	}
 
 	/** Get server name displayed in breadcrumbs
@@ -113,9 +118,25 @@ class Adminer {
 
 	/** Print the script maintaining the service worker */
 	function serviceWorker(): void {
-		if (!defined('Adminer\DIR')) { // only the compiled version serves the files itself, the development version leaves them to the web server
-			service_worker();
-		}
+		service_worker();
+	}
+
+	/** Get the web app manifest allowing to install Adminer as an application, empty array to not offer it
+	* @return mixed[]
+	*/
+	function manifest(): array {
+		$host = $_SERVER["HTTP_HOST"] ?: $_SERVER["SERVER_NAME"]; // HTTP_HOST is not sent by HTTP/1.0 clients
+		// relative to the manifest served by Adminer itself; ME holds no filename if Adminer is the directory index
+		$self = preg_replace('~\?.*~', '', ME) ?: '.';
+		return array(
+			'name' => "Adminer" . ($host != "" ? " - $host" : ""), // the host distinguishes the applications installed from several servers
+			'short_name' => 'Adminer',
+			'description' => lang('Database management in a single PHP file'),
+			'start_url' => $self,
+			'scope' => $self, // the same as the scope of the service worker; the default would be the whole directory
+			'display' => 'minimal-ui', // to keep the Back button which Adminer relies on
+			'icons' => array(array('src' => DIR . "static/logo.svg", 'sizes' => 'any', 'type' => 'image/svg+xml')), // https://crbug.com/40925759
+		);
 	}
 
 	/** Print HTML code inside <head>
@@ -231,16 +252,15 @@ class Adminer {
 		}
 		// routine comments usually hold documentation, e.g. in the MySQL sys schema
 		/** Format string as table row */
-		$pre_tr = function (string $s): string {
-			return preg_replace('~^~m', '<tr>', preg_replace('~\|~', '<td>', preg_replace('~\|$~m', "", rtrim($s))));
+		$pre_tr = function (string $s, string $cell = 'td'): string {
+			return preg_replace('~^~m', '<tr>', preg_replace('~\|~', "<$cell>", preg_replace('~\|$~m', "", rtrim($s))));
 		};
 		$table = '(\+--[-+]+\+\n)';
 		$row = '(\| .* \|\n)';
 		return "<pre>\n" . preg_replace_callback(
 			"~^$table?$row$table?($row*)$table?~m",
 			function ($match) use ($pre_tr) {
-				$first_row = $pre_tr($match[2]);
-				return "<table>\n" . ($match[1] ? "<thead>$first_row<tbody>\n" : $first_row) . $pre_tr($match[4]) . "\n</table>";
+				return "<table>\n" . ($match[1] ? "<thead>" . $pre_tr($match[2], 'th') . "<tbody>\n" : $pre_tr($match[2])) . $pre_tr($match[4]) . "\n</table>";
 			},
 			preg_replace(
 				'~(\n(    -|mysql)&gt; )(.+)~',
@@ -278,10 +298,8 @@ class Adminer {
 		if (support("table") || support("indexes")) {
 			$links["table"] = lang('Show structure');
 		}
-		$is_view = false;
 		if (support("table")) {
-			$is_view = is_view($tableStatus);
-			if ($is_view) {
+			if (is_view($tableStatus)) {
 				if (support("view")) {
 					$links["view"] = lang('Alter view');
 				}
@@ -295,7 +313,6 @@ class Adminer {
 		foreach ($links as $key => $val) {
 			echo " <a href='" . h(ME) . "$key=" . url_escape($name) . ($key == "edit" ? $set : "") . "'" . bold(isset($_GET[$key])) . ">$val</a>";
 		}
-		echo doc_link(array(JUSH => driver()->tableHelp($name, $is_view)), "?");
 		echo "\n";
 	}
 
@@ -350,6 +367,20 @@ class Adminer {
 	function sqlPrintAfter(): void {
 	}
 
+	/** Get EXPLAIN of a SELECT in SQL command
+	* @param string[] $orgtables table => orgtable from the result of $query
+	* @return string HTML
+	*/
+	function explain(Db $connection, string $query, array $orgtables): string {
+		$result = explain($connection, $query);
+		if (!$result) {
+			return "";
+		}
+		ob_start();
+		print_select_result($result, $connection, $orgtables);
+		return ob_get_clean();
+	}
+
 	/** Description of a row in a table
 	* @return string SQL expression, empty string for no description
 	*/
@@ -358,9 +389,9 @@ class Adminer {
 	}
 
 	/** Get descriptions of selected data
-	* @param list<string[]> $rows all data to print
+	* @param list<array<?string>> $rows all data to print
 	* @param list<ForeignKey>[] $foreignKeys
-	* @return list<string[]>
+	* @return list<array<?string>>
 	*/
 	function rowDescriptions(array $rows, array $foreignKeys): array {
 		return $rows;
@@ -413,14 +444,14 @@ class Adminer {
 	function tableStructurePrint(array $fields, ?array $tableStatus = null): void {
 		echo "<div class='scrollable'>\n";
 		echo "<table class='nowrap odds'>\n";
-		echo "<thead><tr><th>" . lang('Column') . "<td>" . lang('Type') . (support("comment") ? "<td>" . lang('Comment') : "") . "<tbody>\n";
-		$structured_types = driver()->structuredTypes();
+		echo "<thead><tr><th>" . lang('Column') . "<th>" . lang('Type') . (support("comment") ? "<th>" . lang('Comment') : "") . "<tbody>\n";
+		$user_types = (support("type") ? types() : array()); // not structuredTypes() - the types created by extensions are offered in the type dropdown but the type page doesn't manage them
 		foreach ($fields as $field) {
 			echo "<tr><th>" . h($field["field"]);
 			$type = h($field["full_type"]);
 			$collation = h($field["collation"]);
 			echo "<td><span title='$collation'>"
-				. (in_array($type, (array) $structured_types[lang('User types')])
+				. (in_array($type, $user_types)
 					? "<a href='" . h(ME . 'type=' . url_escape($type)) . "'>$type</a>"
 					: $type . ($collation && isset($tableStatus["Collation"]) && $collation != $tableStatus["Collation"] ? " $collation" : ""))
 				. "</span>"
@@ -473,6 +504,20 @@ class Adminer {
 		echo "</table>\n";
 	}
 
+	/** Get the pattern for the name of a new object, empty string lets the database choose it
+	* @param 'PRIMARY'|'UNIQUE'|'INDEX'|'FULLTEXT'|'SPATIAL'|'VECTOR'|'FOREIGN'|'CHECK'|'TRIGGER' $type
+	* @return string {table}, {columns} joined by _ (UPDATE OF prefixed by _ in TRIGGER, none in CHECK), {timing} and {event} as first letters (e.g. biu) and {type} as row or statement in TRIGGER
+	*/
+	function namePattern(string $type): string {
+		if ($type == "FOREIGN" || $type == "CHECK") {
+			return "";
+		}
+		if ($type == "TRIGGER") {
+			return "{table}_{timing}{event}";
+		}
+		return (JUSH == "sql" ? "" : "{table}_") . "{columns}";
+	}
+
 	/** Print columns box in select
 	* @param list<string> $select result of selectColumnsProcess()[0]
 	* @param string[] $columns selectable columns
@@ -521,7 +566,7 @@ class Adminer {
 		}
 		$operators = adminer()->operators($tableStatus);
 		foreach (array_merge((array) $_GET["where"], array(array())) as $i => $val) {
-			if (!$val || ("$val[col]$val[val]" != "" && in_array($val["op"], $operators))) {
+			if (!$val || (("$val[col]$val[val]" != "" || preg_match('~NULL$~', $val["op"])) && in_array($val["op"], $operators))) {
 				echo "<div>" . select_input(
 					" name='where[$i][col]' data-default=''" . on('change', ($val ? 'selectFieldChange' : 'selectAddRow')),
 					$columns,
@@ -662,7 +707,7 @@ class Adminer {
 			$val += array("col" => "", "op" => first($operators), "val" => "");
 			$_GET["where"][$key] = $val; // used also by selectSearchPrint() and by the COUNT(*) links
 			$col = $val["col"];
-			if ("$col$val[val]" != "" && in_array($val["op"], $operators)) {
+			if (("$col$val[val]" != "" || preg_match('~NULL$~', $val["op"])) && in_array($val["op"], $operators)) {
 				if ($val["op"] == "SQL" && (!$_POST || !verify_token())) {
 					SqlDb::$untrusted = true; // the condition can be sent by GET which is not protected by the CSRF token
 				}
@@ -672,6 +717,8 @@ class Adminer {
 					$cond = " $val[op]";
 					if (preg_match('~IN$~', $val["op"])) {
 						$cond .= " " . ($val["val"] != "" ? process_in($val["val"]) : "(NULL)");
+					} elseif ($val["op"] == "BETWEEN") {
+						$cond .= " " . process_between($val["val"]);
 					} elseif ($val["op"] == "SQL") {
 						$cond = " $val[val]"; // SQL injection
 					} elseif (preg_match('~^(I?LIKE) %%$~', $val["op"], $match)) {
@@ -916,7 +963,7 @@ class Adminer {
 			if ($is_view == 2) {
 				$fields = array();
 				foreach (fields($table) as $name => $field) {
-					$fields[] = idf_escape($name) . " $field[full_type]";
+					$fields[] = idf_escape($name) . " " . full_type_sql($field);
 				}
 				$create = "CREATE TABLE " . table($table) . " (" . implode(", ", $fields) . ")";
 			} else {
@@ -992,6 +1039,11 @@ class Adminer {
 						}
 						$suffix = ($style == "INSERT+UPDATE" ? "\nON DUPLICATE KEY UPDATE " . implode(", ", $values) : "") . ";\n";
 					}
+					foreach ($row as $key => $val) {
+						if (is_array($val)) { // nested values of the document drivers, printed as tables by select_value()
+							$row[$key] = json_encode($val, 256 | 64); // 256 - JSON_UNESCAPED_UNICODE, 64 - JSON_UNESCAPED_SLASHES available since PHP 5.4
+						}
+					}
 					if ($_POST["format"] != "sql") {
 						if ($style == "table") {
 							dump_csv($keys);
@@ -1036,6 +1088,8 @@ class Adminer {
 				}
 			} elseif ($_POST["format"] == "sql") {
 				echo "-- " . str_replace("\n", " ", connection()->error) . "\n";
+			} else {
+				dump_csv(array(connection()->error));
 			}
 			if ($identity_insert) {
 				echo "SET IDENTITY_INSERT " . table($table) . " OFF;\n";
@@ -1246,13 +1300,13 @@ class Adminer {
 		hidden_fields_get();
 		$db_events = on('mousedown', 'dbMouseDown') . on('change', 'dbChange');
 		echo "<label title='" . lang('Database') . "'>" . lang('DB') . ": " . ($databases
-			? html_select("db", array("" => "") + $databases, DB, $db_events)
+			? html_select("db", array("" => "") + group_system($databases), DB, $db_events)
 			: "<input name='db' value='" . h(DB) . "' autocapitalize='off' size='19'>\n"
 		) . "</label>";
 		echo "<input type='submit' value='" . lang('Use') . "'" . ($databases ? " class='hidden'" : "") . ">\n";
 		if (support("scheme")) {
 			if ($missing != "db" && DB != "" && connection()->select_db(DB)) {
-				echo "<br><label>" . lang('Schema') . ": " . html_select("ns", array("" => "") + adminer()->schemas(), $_GET["ns"], $db_events) . "</label>";
+				echo "<br><label>" . lang('Schema') . ": " . html_select("ns", array("" => "") + group_system(adminer()->schemas(), true), $_GET["ns"], $db_events) . "</label>";
 				if ($_GET["ns"] != "") {
 					set_schema($_GET["ns"]);
 				}
@@ -1329,5 +1383,13 @@ class Adminer {
 	*/
 	function killProcess(string $id) {
 		return kill_process($id);
+	}
+
+	/** Format a size in bytes of tables, indexes and databases
+	* @param float|numeric-string $val
+	* @return string HTML code
+	*/
+	function formatSizeValue($val): string {
+		return format_number($val);
 	}
 }

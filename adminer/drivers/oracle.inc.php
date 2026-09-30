@@ -1,7 +1,7 @@
 <?php
 namespace Adminer;
 
-add_driver("oracle", "Oracle beta");
+add_driver("oracle", "Oracle");
 
 if (isset($_GET["oracle"])) {
 	define('Adminer\DRIVER', "oracle");
@@ -16,7 +16,7 @@ if (isset($_GET["oracle"])) {
 	if (extension_loaded("oci8") && $_GET["ext"] != "pdo") {
 		class Db extends SqlDb {
 			public $extension = "oci8";
-			private $link;
+			private $link, $transaction = false;
 
 			function _error($errno, $error) {
 				if (ini_bool("html_errors")) {
@@ -54,7 +54,7 @@ if (isset($_GET["oracle"])) {
 					return false;
 				}
 				set_error_handler(array($this, '_error'));
-				$return = @oci_execute($result);
+				$return = @oci_execute($result, ($this->transaction ? OCI_NO_AUTO_COMMIT : OCI_COMMIT_ON_SUCCESS));
 				restore_error_handler();
 				if ($return) {
 					if (oci_num_fields($result)) {
@@ -67,10 +67,35 @@ if (isset($_GET["oracle"])) {
 			}
 
 			function timeout(int $ms): bool {
-				return (function_exists('oci_set_call_timeout')
-					? oci_set_call_timeout($this->link, $ms) // available since PHP 7.2.13
-					: false
-				);
+				return function_exists('oci_set_call_timeout') && oci_set_call_timeout($this->link, $ms); // available since PHP 7.2.13
+			}
+
+			function inTransaction(): bool {
+				return $this->transaction;
+			}
+
+			function begin(): bool {
+				$this->transaction = true; // the first command starts the transaction, oci_execute() only must not commit it
+				return true;
+			}
+
+			function commit(): bool {
+				return $this->end_transaction(@oci_commit($this->link));
+			}
+
+			function rollback(): bool {
+				return $this->end_transaction(@oci_rollback($this->link)); // succeeds also without a transaction
+			}
+
+			/** Store the error of commit or rollback */
+			private function end_transaction(bool $return): bool {
+				$this->transaction = false; // a failed commit rolls the transaction back
+				if (!$return) {
+					$error = oci_error($this->link);
+					$this->errno = $error["code"];
+					$this->error = $error["message"];
+				}
+				return $return;
 			}
 		}
 
@@ -104,9 +129,7 @@ if (isset($_GET["oracle"])) {
 				$return = new \stdClass;
 				$return->name = oci_field_name($this->result, $column);
 				$type = oci_field_type($this->result, $column);
-				$return->native_type = $type;
-				$return->type = $type; //! map to MySQL numbers
-				$return->charsetnr = (preg_match("~raw|blob|bfile~", $type) ? 63 : 0); // 63 - binary
+				$return->native_type = idx(array(100 => "binary_float", "binary_double"), $type, $type); // oci_field_type() returns the code instead of the name for these
 				return $return;
 			}
 		}
@@ -148,14 +171,25 @@ if (isset($_GET["oracle"])) {
 		public $grouping = array("avg", "count", "count distinct", "max", "min", "sum");
 
 		function operators(?array $tableStatus): array {
-			return array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL", "SQL");
+			return array("=", "<", ">", "<=", ">=", "!=", "LIKE", "LIKE %%", "IN", "BETWEEN", "IS NULL", "NOT LIKE", "NOT IN", "IS NOT NULL", "SQL");
+		}
+
+		static function connect(string $server, string $username, string $password) {
+			$connection = parent::connect($server, $username, $password);
+			if (is_object($connection)) {
+				$connection->query("ALTER SESSION SET CURSOR_SHARING = FORCE" // convert the literals to binds so that a dictionary query compiled for one table is reused for the others
+					. " NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS'" // the ISO date and time formats sent by the edit form and import
+					. " NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF'"
+					. " NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'");
+			}
+			return $connection;
 		}
 
 		function __construct(Db $connection) {
 			parent::__construct($connection);
 			$this->types = array(
 				lang('Numbers') => array("number" => 38, "binary_float" => 12, "binary_double" => 21),
-				lang('Date and time') => array("date" => 10, "timestamp" => 29, "interval year" => 12, "interval day" => 28), //! year(), day() to second()
+				lang('Date and time') => array("date" => 19, "timestamp" => 29, "interval year" => 12, "interval day" => 28), //! year(), day() to second()
 				lang('Strings') => array("char" => 2000, "varchar2" => 4000, "nchar" => 2000, "nvarchar2" => 4000, "clob" => 4294967295, "nclob" => 4294967295),
 				lang('Binary') => array("raw" => 2000, "long raw" => 2147483648, "blob" => 4294967295, "bfile" => 4294967296),
 				lang('Geometry') => array("sdo_geometry" => 0),
@@ -165,7 +199,7 @@ if (isset($_GET["oracle"])) {
 		//! support empty $set in insert()
 
 		function begin() {
-			return true; // automatic start
+			return $this->conn->begin(); // there is no command starting a transaction to print
 		}
 
 		function convertSearch(string $idf, array $val, array $field): string {
@@ -188,6 +222,10 @@ if (isset($_GET["oracle"])) {
 
 		function quoteBinary(string $s): string {
 			return "HEXTORAW(" . q(bin2hex($s)) . ")"; //! the literal is limited to 4000 characters
+		}
+
+		function typeName(\stdClass $field): string {
+			return strtolower(parent::typeName($field)); // OCI8 and PDO_OCI report the type names in upper case
 		}
 
 		function hasCStyleEscapes(): bool {
@@ -213,18 +251,15 @@ if (isset($_GET["oracle"])) {
 
 		function allFields(): array {
 			$return = array();
-			$view = views_table("view_name");
+			// no filter to tables and views - it only excludes rare clusters and slows the query down threefold
 			$rows = get_rows('SELECT c.table_name "tab", c.column_name "field", c.data_type "type", c.nullable "nullable",
 	c.data_precision "precision", c.data_scale "scale", c.char_col_decl_length "char_length"
 FROM all_tab_columns c
-WHERE c.table_name IN (
-	SELECT table_name FROM all_tables WHERE ' . where_owner('') . "
-	UNION SELECT view_name FROM $view
-)" . where_owner(" AND ", "c.owner") . '
+WHERE ' . where_owner("c.owner") . '
 ORDER BY c.table_name, c.column_id', $this->conn);
 			foreach ($rows as $row) {
 				$length = "$row[precision],$row[scale]";
-				$row["length"] = ($length == "," ? $row["char_length"] : $length); //! int
+				$row["length"] = (strpos($row["type"], "(") ? "" : ($length == "," ? $row["char_length"] : $length)); //! int
 				$row["type"] = strtolower($row["type"]);
 				$row["null"] = ($row["nullable"] == "Y");
 				$return[$row["tab"]][] = $row;
@@ -268,27 +303,28 @@ ORDER BY c.table_name, c.column_id', $this->conn);
 		return get_val("SELECT USER FROM DUAL");
 	}
 
-	function where_owner(string $prefix, string $owner = "owner"): string {
-		return "$prefix$owner = " . q(DB); // an empty DB matches no object
+	function where_owner(string $owner = "owner"): string {
+		return "$owner = " . q(DB); // an empty DB matches no object
 	}
 
 	function views_table(string $columns): string {
-		return "(SELECT $columns FROM all_views WHERE " . where_owner('') . ")";
+		return "(SELECT $columns FROM all_views WHERE " . where_owner() . ")";
+	}
+
+	// all_objects is much faster than all_tables, which digs into segments and statistics (hundreds of ms on an idle XE)
+	// a materialized view has a container table of the same name so including 'TABLE' and 'VIEW' matches all_tables UNION all_views
+	function objects_table(): string {
+		return "(SELECT object_name, DECODE(object_type, 'VIEW', 'view', 'table') object_type FROM all_objects WHERE " . where_owner() . " AND object_type IN ('TABLE', 'VIEW'))";
 	}
 
 	function tables_list(): array {
-		$view = views_table("view_name");
-		return get_key_vals(
-			"SELECT table_name, 'table' FROM all_tables WHERE " . where_owner('') . "
-UNION SELECT view_name, 'view' FROM $view
-ORDER BY 1"
-		);
+		return get_key_vals("SELECT * FROM " . objects_table() . " ORDER BY 1");
 	}
 
 	function count_tables(array $databases): array {
 		$return = array();
 		foreach ($databases as $db) {
-			$return[$db] = get_val("SELECT COUNT(*) FROM all_tables WHERE owner = " . q($db));
+			$return[$db] = get_val("SELECT COUNT(*) FROM all_objects WHERE object_type IN ('TABLE', 'VIEW') AND owner = " . q($db));
 		}
 		return $return;
 	}
@@ -296,8 +332,13 @@ ORDER BY 1"
 	function table_status(string $name = "", bool $fast = false): array {
 		$return = array();
 		$search = q($name);
-		$view = views_table("view_name");
-		$owner = where_owner('', "t.owner");
+		if ($fast || $name != "") {
+			// sizes and rows are displayed only in the list of all tables; compiling the user_segments query costs ~750 ms after an instance restart
+			foreach (get_rows('SELECT object_name "Name", object_type "Engine" FROM ' . objects_table() . ($name != "" ? " WHERE object_name = $search" : "") . ' ORDER BY 1') as $row) {
+				$return[$row["Name"]] = $row;
+			}
+			return $return;
+		}
 		foreach (
 			// sizes are available only for segments of the current user
 			get_rows('SELECT t.table_name "Name", \'table\' "Engine", s.bytes "Data_length", i.bytes "Index_length", t.num_rows "Rows"
@@ -305,8 +346,8 @@ FROM all_tables t
 LEFT JOIN (SELECT segment_name, SUM(bytes) bytes FROM user_segments WHERE segment_type LIKE \'TABLE%\' GROUP BY segment_name) s ON s.segment_name = t.table_name
 LEFT JOIN (SELECT i.table_name, SUM(s.bytes) bytes FROM user_indexes i
 	JOIN user_segments s ON s.segment_name = i.index_name AND s.segment_type LIKE \'INDEX%\' GROUP BY i.table_name) i ON i.table_name = t.table_name
-WHERE ' . $owner . ($name != "" ? " AND t.table_name = $search" : "") . "
-UNION SELECT view_name, 'view', 0, 0, 0 FROM $view" . ($name != "" ? " WHERE view_name = $search" : "") . "
+WHERE ' . where_owner("t.owner") . "
+UNION SELECT view_name, 'view', 0, 0, 0 FROM " . views_table("view_name") . "
 ORDER BY 1") as $row
 		) {
 			$return[$row["Name"]] = $row;
@@ -324,12 +365,14 @@ ORDER BY 1") as $row
 
 	function fields(string $table): array {
 		$return = array();
-		$owner = where_owner(" AND ");
-		foreach (get_rows("SELECT * FROM all_tab_columns WHERE table_name = " . q($table) . "$owner ORDER BY column_id") as $row) {
+		$identity = null;
+		foreach (get_rows("SELECT * FROM all_tab_columns WHERE table_name = " . q($table) . " AND " . where_owner() . " ORDER BY column_id") as $row) {
 			$type = $row["DATA_TYPE"];
 			$length = "$row[DATA_PRECISION],$row[DATA_SCALE]";
 			if ($length == ",") {
 				$length = $row["CHAR_COL_DECL_LENGTH"];
+			} elseif (strpos($type, "(")) {
+				$length = ""; // the type includes the precision, e.g. TIMESTAMP(6) WITH TIME ZONE
 			} //! int
 			$default = $row["DATA_DEFAULT"];
 			if ($default !== null) {
@@ -337,6 +380,12 @@ ORDER BY 1") as $row
 				if (preg_match("~^'(.*)'\$~s", $default, $match)) {
 					$default = str_replace("''", "'", $match[1]); // a string is stored as a quoted literal
 				}
+			}
+			if ($row["IDENTITY_COLUMN"] == "YES") {
+				if ($identity === null) { // all_tab_identity_cols exists only since Oracle 12c, which introduced identity columns
+					$identity = get_key_vals("SELECT column_name, generation_type FROM all_tab_identity_cols WHERE table_name = " . q($table) . " AND " . where_owner());
+				}
+				$default = "GENERATED " . $identity[$row["COLUMN_NAME"]] . ($row["DEFAULT_ON_NULL"] == "YES" ? " ON NULL" : "") . " AS IDENTITY"; // instead of the internal sequence
 			}
 			$privileges = array("insert" => 1, "select" => 1, "update" => 1, "order" => 1);
 			if ($row["DATA_TYPE_OWNER"] == "" || $type == "XMLTYPE") { // an object type, e.g. SDO_GEOMETRY, can't be compared with a string
@@ -349,7 +398,7 @@ ORDER BY 1") as $row
 				"length" => $length,
 				"default" => $default,
 				"null" => ($row["NULLABLE"] == "Y"),
-				//! "auto_increment" => false,
+				"auto_increment" => ($row["IDENTITY_COLUMN"] == "YES"),
 				//! "collation" => $row["CHARACTER_SET_NAME"],
 				"privileges" => $privileges,
 				//! "comment" => $row["Comment"],
@@ -359,32 +408,62 @@ ORDER BY 1") as $row
 		return $return;
 	}
 
-	function indexes(string $table, ?Db $connection2 = null): array {
+	/** Get the primary, unique and referential constraints of the table with their columns in position order
+	* @return array<string, array{type: string, columns: list<string>, r_owner: string, r_constraint: string, delete_rule: string}>
+	*/
+	function table_constraints(string $table, ?Db $connection2 = null): array {
+		// one statement shape for both indexes() and foreign_keys() - every statement over all_constraints takes ~0.5 s to compile after a restart of the server
 		$return = array();
-		$owner = where_owner(" AND ", "aic.table_owner");
 		foreach (
-			get_rows("SELECT aic.*, ac.constraint_type, atc.data_default
-FROM all_ind_columns aic
-LEFT JOIN all_constraints ac ON aic.index_name = ac.constraint_name AND aic.table_name = ac.table_name AND aic.index_owner = ac.owner
-LEFT JOIN all_tab_cols atc ON aic.column_name = atc.column_name AND aic.table_name = atc.table_name AND aic.index_owner = atc.owner
-WHERE aic.table_name = " . q($table) . "$owner
-ORDER BY ac.constraint_type, aic.column_position", $connection2) as $row
+			get_rows('SELECT c.constraint_name "name", c.constraint_type "type", c.r_owner "r_owner", c.r_constraint_name "r_constraint", c.delete_rule "delete_rule", cc.column_name "column"
+FROM all_constraints c
+JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name
+WHERE c.constraint_type IN (\'P\', \'U\', \'R\') AND ' . where_owner("c.owner") . " AND c.table_name = " . q($table) . '
+ORDER BY cc.position', $connection2) as $row
 		) {
-			$index_name = $row["INDEX_NAME"];
-			$column_name = $row["DATA_DEFAULT"];
-			$column_name = ($column_name ? trim($column_name, '"') : $row["COLUMN_NAME"]); // trim - possibly wrapped in quotes but never contains quotes inside
-			$return[$index_name]["type"] = ($row["CONSTRAINT_TYPE"] == "P" ? "PRIMARY" : ($row["CONSTRAINT_TYPE"] == "U" ? "UNIQUE" : "INDEX"));
-			$return[$index_name]["columns"][] = $column_name;
-			$return[$index_name]["lengths"][] = ($row["CHAR_LENGTH"] && $row["CHAR_LENGTH"] != $row["COLUMN_LENGTH"] ? $row["CHAR_LENGTH"] : null);
-			$return[$index_name]["descs"][] = ($row["DESCEND"] && $row["DESCEND"] == "DESC" ? '1' : null);
+			$name = $row["name"];
+			$return[$name]["type"] = $row["type"];
+			$return[$name]["r_owner"] = $row["r_owner"];
+			$return[$name]["r_constraint"] = $row["r_constraint"];
+			$return[$name]["delete_rule"] = $row["delete_rule"];
+			$return[$name]["columns"][] = $row["column"];
 		}
 		return $return;
 	}
 
+	function indexes(string $table, ?Db $connection2 = null): array {
+		$return = array();
+		$constraints = array();
+		foreach (table_constraints($table, $connection2) as $name => $constraint) {
+			$constraints[$name] = $constraint["type"];
+		}
+		foreach (
+			get_rows("SELECT aic.*, atc.data_default
+FROM all_ind_columns aic
+LEFT JOIN all_tab_cols atc ON aic.column_name = atc.column_name AND aic.table_name = atc.table_name AND aic.index_owner = atc.owner
+WHERE aic.table_name = " . q($table) . " AND " . where_owner("aic.table_owner") . "
+ORDER BY aic.column_position", $connection2) as $row
+		) {
+			$index_name = $row["INDEX_NAME"];
+			$column_name = $row["DATA_DEFAULT"];
+			$column_name = ($column_name ? trim($column_name, '"') : $row["COLUMN_NAME"]); // trim - possibly wrapped in quotes but never contains quotes inside
+			$type = idx($constraints, $index_name);
+			$return[$index_name]["type"] = ($type == "P" ? "PRIMARY" : ($type == "U" ? "UNIQUE" : "INDEX"));
+			$return[$index_name]["columns"][] = $column_name;
+			$return[$index_name]["lengths"][] = ($row["CHAR_LENGTH"] && $row["CHAR_LENGTH"] != $row["COLUMN_LENGTH"] ? $row["CHAR_LENGTH"] : null);
+			$return[$index_name]["descs"][] = ($row["DESCEND"] && $row["DESCEND"] == "DESC" ? '1' : null);
+		}
+		uasort($return, function ($a, $b) {
+			// the constraint indexes first as the removed ORDER BY ac.constraint_type did, the callers pick the first usable index
+			$order = array("PRIMARY" => 0, "UNIQUE" => 1, "INDEX" => 2);
+			return $order[$a["type"]] - $order[$b["type"]];
+		});
+		return $return;
+	}
+
 	function view(string $name): array {
-		$view = views_table("view_name, text");
-		$rows = get_rows('SELECT text "select" FROM ' . $view . ' WHERE view_name = ' . q($name));
-		return reset($rows);
+		$rows = get_rows('SELECT text "select" FROM ' . views_table("view_name, text") . ' WHERE view_name = ' . q($name));
+		return ($rows ? $rows[0] : array());
 	}
 
 	function collations(): array {
@@ -392,7 +471,7 @@ ORDER BY ac.constraint_type, aic.column_position", $connection2) as $row
 	}
 
 	function information_schema(string $db, string $schema = ""): bool {
-		return ($schema != "" ? $schema : $db) == "INFORMATION_SCHEMA"; //! SYS and SYSTEM are read-only too
+		return in_array($schema != "" ? $schema : $db, array("INFORMATION_SCHEMA", "SYS", "SYSTEM"));
 	}
 
 	function error(): string {
@@ -472,26 +551,32 @@ ORDER BY ac.constraint_type, aic.column_position", $connection2) as $row
 
 	function foreign_keys(string $table): array {
 		$return = array();
-		$query = "SELECT c_list.CONSTRAINT_NAME as NAME,
-c_src.COLUMN_NAME as SRC_COLUMN,
-c_dest.OWNER as DEST_DB,
-c_dest.TABLE_NAME as DEST_TABLE,
-c_dest.COLUMN_NAME as DEST_COLUMN,
-c_list.DELETE_RULE as ON_DELETE
-FROM ALL_CONSTRAINTS c_list, ALL_CONS_COLUMNS c_src, ALL_CONS_COLUMNS c_dest
-WHERE c_list.CONSTRAINT_NAME = c_src.CONSTRAINT_NAME
-AND c_list.R_CONSTRAINT_NAME = c_dest.CONSTRAINT_NAME
-AND c_list.CONSTRAINT_TYPE = 'R'
-AND c_src.TABLE_NAME = " . q($table);
-		foreach (get_rows($query) as $row) {
-			$return[$row['NAME']] = array(
-				"db" => $row['DEST_DB'],
-				"table" => $row['DEST_TABLE'],
-				"source" => array($row['SRC_COLUMN']),
-				"target" => array($row['DEST_COLUMN']),
-				"on_delete" => $row['ON_DELETE'],
-				"on_update" => null,
-			);
+		$targets = array();
+		foreach (table_constraints($table) as $name => $constraint) {
+			if ($constraint["type"] == "R") {
+				$return[$name] = array(
+					"source" => $constraint["columns"],
+					"target" => array(),
+					"on_delete" => $constraint["delete_rule"],
+					"on_update" => null,
+				);
+				$targets[$name] = array($constraint["r_owner"], $constraint["r_constraint"]);
+			}
+		}
+		if ($targets) {
+			$where = array();
+			foreach ($targets as $target) {
+				$where[] = "(owner = " . q($target[0]) . " AND constraint_name = " . q($target[1]) . ")";
+			}
+			foreach (get_rows("SELECT owner, constraint_name, table_name, column_name FROM all_cons_columns WHERE " . implode(" OR ", array_unique($where)) . " ORDER BY position") as $row) {
+				foreach ($targets as $name => $target) {
+					if ($target == array($row["OWNER"], $row["CONSTRAINT_NAME"])) {
+						$return[$name]["db"] = $row["OWNER"];
+						$return[$name]["table"] = $row["TABLE_NAME"];
+						$return[$name]["target"][] = $row["COLUMN_NAME"];
+					}
+				}
+			}
 		}
 		return $return;
 	}
@@ -501,7 +586,8 @@ AND c_src.TABLE_NAME = " . q($table);
 			return array();
 		}
 		$rows = get_rows('SELECT trigger_name "Trigger", trigger_type "Type", triggering_event "Event", trigger_body "Statement"
-FROM all_triggers WHERE trigger_name = ' . q($name) . where_owner(" AND "));
+FROM all_triggers
+WHERE trigger_name = ' . q($name) . " AND " . where_owner());
 		$return = reset($rows);
 		if ($return) {
 			$type = $return["Type"]; // e.g. 'BEFORE STATEMENT', 'AFTER EACH ROW', 'INSTEAD OF', 'COMPOUND'
@@ -513,7 +599,7 @@ FROM all_triggers WHERE trigger_name = ' . q($name) . where_owner(" AND "));
 
 	function triggers(string $table): array {
 		$return = array();
-		foreach (get_rows("SELECT trigger_name, trigger_type, triggering_event FROM all_triggers WHERE table_name = " . q($table) . where_owner(" AND ")) as $row) {
+		foreach (get_rows("SELECT trigger_name, trigger_type, triggering_event FROM all_triggers WHERE table_name = " . q($table) . " AND " . where_owner()) as $row) {
 			$return[$row["TRIGGER_NAME"]] = array(preg_replace('~ (STATEMENT|EACH ROW)$~', '', $row["TRIGGER_TYPE"]), $row["TRIGGERING_EVENT"]);
 		}
 		return $return;
@@ -585,8 +671,8 @@ FROM all_triggers WHERE trigger_name = ' . q($name) . where_owner(" AND "));
 	sql.sql_text AS "sql_text",
 	sess.machine AS "machine",
 	sess.port AS "port"
-FROM v$session sess LEFT OUTER JOIN v$sql sql
-ON sql.sql_id = sess.sql_id
+FROM v$session sess
+LEFT JOIN v$sql sql ON sql.sql_id = sess.sql_id
 WHERE sess.type = \'USER\'
 ORDER BY PROCESS
 ');
@@ -603,6 +689,6 @@ ORDER BY PROCESS
 	}
 
 	function support(string $feature): bool {
-		return preg_match('~^(columns|database|drop_col|fast_status|indexes|descidx|processlist|sql|status|table|trigger|variables|view|view_trigger)$~', $feature); //!
+		return preg_match('~^(columns|database|drop_col|fast_status|indexes|descidx|processlist|sql|status|table|trigger|variables|view|view_trigger)$~', $feature);
 	}
 }

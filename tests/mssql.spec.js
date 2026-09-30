@@ -73,7 +73,7 @@ test('Create table 2', async () => {
 	await page.locator('[name="fields[1.1][field]"]').fill('interpret');
 	await page.locator('[name="fields[1.1][type]"]').selectOption({label: 'int'});
 	await page.locator('[name="fields[1.11][field]"]').fill('title');
-	await page.locator('[name="fields[1.11][type]"]').selectOption({label: 'varchar'});
+	await page.locator('[name="fields[1.11][type]"]').selectOption({label: 'nvarchar'}); // varchar would not hold the non-ASCII title
 	await page.locator('[name="fields[1.11][length]"]').fill('50');
 	await page.locator('[name="comments"]').check();
 	await page.locator('[name="fields[1.1][comment]"]').fill('Interpret');
@@ -131,13 +131,19 @@ test('Create view', async () => {
 	await expect(page.locator('body')).toContainText('View has been created.');
 });
 
-test('Invalid table', async () => {
+test('Invalid object', async () => {
 	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&table=invalid');
-	await expect(page.locator('body')).toContainText('No tables.');
+	await expect(page.locator('body')).toContainText('Not found.');
 	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&create=invalid');
-	await expect(page.locator('body')).toContainText('No tables.');
+	await expect(page.locator('body')).toContainText('Not found.');
 	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&select=invalid');
-	await expect(page.locator('body')).toContainText('Unable to select the table:');
+	await expect(page.locator('body')).toContainText('Not found.');
+	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&foreign=albums&name=invalid');
+	await expect(page.locator('body')).toContainText('Not found.');
+	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&procedure=invalid');
+	await expect(page.locator('body')).toContainText('Not found.');
+	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=invalid');
+	await expect(page.locator('body')).toContainText('Not found.');
 });
 
 test('Schema', async () => {
@@ -161,7 +167,7 @@ test('Clone', async () => {
 	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&select=albums');
 	await page.locator('[name="check[]"]').click();
 	await page.locator('[name="clone"]').click();
-	await page.locator('[name="fields[title]"]').fill('Black and White');
+	await page.locator('[name="fields[title]"]').fill('Černobílá');
 	await button(page, 'Save').click();
 	await expect(page.locator('body')).toContainText('Item 3 has been inserted.');
 });
@@ -169,12 +175,12 @@ test('Clone', async () => {
 test('Pagination', async () => {
 	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&select=albums&order[0]=id&limit=1');
 	await expect(page.locator('body')).toContainText('Dangerous');
-	await expect(page.locator('body')).not.toContainText('Black and White');
+	await expect(page.locator('body')).not.toContainText('Černobílá');
 	await expect(page.locator('body')).toContainText('2 rows');
 	await link(page, 'Load more data').click(); // appends the next page by AJAX
-	await expect(page.locator('body')).toContainText('Black and White');
+	await expect(page.locator('body')).toContainText('Černobílá');
 	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&select=albums&order[0]=id&limit=1&page=last');
-	await expect(page.locator('body')).toContainText('Black and White');
+	await expect(page.locator('body')).toContainText('Černobílá');
 	await expect(page.locator('body')).not.toContainText('Dangerous');
 	await expect(page.locator("//fieldset[legend='Page']/b")).toHaveText('2'); // the current page, not a link
 });
@@ -212,6 +218,7 @@ test('Search in tables', async () => {
 	await page.locator('[name="search"]').click();
 	await link(page, 'interprets').click();
 	await expect(page.locator('body')).toContainText('Michael Jackson');
+	await expect(page.locator('#table mark').first()).toHaveText('Jackson');
 });
 
 test('Search in tables with special types', async () => {
@@ -227,6 +234,7 @@ test('Search in tables with special types', async () => {
 		await page.locator('[name="op"]').selectOption(op);
 		await page.locator('[name="query"]').fill(query);
 		await page.locator('[name="search"]').click();
+		await page.waitForLoadState();
 		await expect(page.locator('.error')).toHaveCount(0); // a column which can't be searched must be skipped, not reported
 		await expect(page.locator("li a[href*='select=types&where']")).toBeVisible(); // the list of the tables holding the value
 	}
@@ -234,8 +242,11 @@ test('Search in tables with special types', async () => {
 	for (const query of ['2020-01-03', '12:34:56', 'ěščř']) {
 		await page.locator('[name="query"]').fill(query);
 		await page.locator('[name="search"]').click();
+		await page.waitForLoadState();
 		await expect(page.locator('.error')).toHaveCount(0);
 	}
+	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&select=types');
+	await expect(page.locator('body')).toContainText('00000000-0000-0000-0000-000000000003'); // PDO_DBLIB returns uniqueidentifier as raw bytes without DBLIB_ATTR_STRINGIFY_UNIQUEIDENTIFIER
 	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&sql=' + encodeURIComponent('DROP TABLE types'));
 	await button(page, 'Execute').click();
 });
@@ -310,9 +321,11 @@ test('Import and export CSV', async () => {
 test('Bulk table operations', async () => {
 	// MS SQL offers no maintenance operation, only Truncate and Move to another schema
 	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&sql=' + encodeURIComponent(
-		'CREATE SCHEMA adminer_test2; CREATE TABLE bulk_test (id int); INSERT INTO bulk_test VALUES (1)'
+		'DROP TABLE IF EXISTS adminer_test2.bulk_test; DROP SCHEMA IF EXISTS adminer_test2;' // left by an interrupted run, the first test drops only the tables of dbo
+		+ ' CREATE SCHEMA adminer_test2; CREATE TABLE bulk_test (id int); INSERT INTO bulk_test VALUES (1)'
 	));
 	await button(page, 'Execute').click();
+	await page.waitForLoadState(); // the result is flushed while the queries run, navigating away earlier aborts them
 	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo');
 	// every operation redirects back to this page with the checkboxes cleared
 	await page.locator('input[name="tables[]"][value="bulk_test"]').check();
@@ -362,7 +375,9 @@ test('Export', async () => {
 	await page.locator('[name="format"]').first().click();
 	await page.locator('[name="table_style"]').selectOption({label: 'DROP+CREATE'});
 	await page.locator('[name="data_style"]').selectOption({label: 'INSERT'});
+	await page.locator('[name="schema_style"]').selectOption({label: 'CREATE'});
 	await button(page, 'Export').click();
+	await expect(page.locator('body')).toContainText("IF SCHEMA_ID('dbo') IS NULL EXEC('CREATE SCHEMA [dbo]')");
 	await expect(page.locator('body')).toContainText('CREATE TABLE [dbo].[interprets]');
 	await expect(page.locator('body')).toContainText('INSERT INTO [dbo].[interprets]');
 	await expect(page.locator('body')).toContainText('VIEW [dbo].[albums_interprets]');
@@ -375,6 +390,42 @@ test('Export', async () => {
 		button(page, 'Export').click(),
 	]);
 	expect(download.suggestedFilename()).toBe('adminer_test.tar');
+});
+
+test('Procedures', async () => {
+	await goto(page, '/adminer/?mssql=&username=ODBC&db=adminer_test&ns=dbo&procedure=');
+	await page.locator('[name="add[0]"]').click();
+	await page.locator('[name="fields[1][field]"]').fill('interpret_name');
+	await page.locator('[name="fields[1][type]"]').selectOption({label: 'varchar'});
+	await page.locator('[name="fields[1][length]"]').fill('50');
+	await page.locator('[name="fields[1.1][field]"]').fill('albums');
+	await page.locator('[name="fields[1.1][type]"]').selectOption({label: 'varchar'});
+	await page.locator('[name="fields[1.1][length]"]').fill('max');
+	await page.locator('[name="fields[1.1][inout]"]').selectOption({label: 'OUTPUT'});
+	await setValue(page, 'definition', 'SELECT @interpret_name AS name; SET @albums = @interpret_name');
+	await page.locator('[name="name"]').fill('insert_album');
+	await button(page, 'Save').click();
+	await expect(page.locator('body')).toContainText('Routine has been created.');
+	await link(page, 'insert_album').click();
+	await page.locator('[name="fields[interpret_name]"]').fill('Michael Jackson');
+	await button(page, 'Call').click();
+	await expect(page.locator('body')).toContainText('Michael Jackson');
+	await link(page, 'dbo').click();
+	await link(page, 'Alter').click();
+	await expect(page.locator('[name="fields[2][inout]"]')).toHaveValue('OUTPUT'); // T-SQL has no keyword for an input parameter
+	await expect(page.locator('[name="fields[2][length]"]')).toHaveValue('max');
+	await button(page, 'Save').click(); // CREATE OR ALTER, the routine is not renamed
+	await expect(page.locator('body')).toContainText('Routine has been altered.');
+	await link(page, 'Alter').click();
+	await page.locator('[name="name"]').fill('interprets'); // the name of a table
+	await button(page, 'Save').click();
+	await expect(page.locator('body')).toContainText("There is already an object named 'interprets' in the database.");
+	await link(page, 'dbo').click();
+	await expect(page.locator('#routines + table')).toContainText('insert_album'); // dropping it before the failed CREATE was rolled back
+	await link(page, 'Alter').click();
+	await expect(page.locator('[name="definition"]')).toHaveValue('SELECT @interpret_name AS name; SET @albums = @interpret_name;');
+	await page.locator('[name="drop"]').click();
+	await expect(page.locator('body')).toContainText('Routine has been dropped.');
 });
 
 test('Generated columns', async () => {
@@ -423,6 +474,11 @@ test('SQL command', async () => {
 	await goto(page, '/adminer/?mssql=&username=ODBC&sql=SELECT+122%2B1');
 	await button(page, 'Execute').click();
 	await expect(page.locator('body')).toContainText('123');
+	await goto(page, '/adminer/?mssql=&username=ODBC&sql=');
+	await setValue(page, 'query', 'CREATE TABLE #t (a int);\nBEGIN TRANSACTION;\nINSERT INTO #t VALUES (1);\nROLLBACK;\nSELECT COUNT(*) FROM #t;\nBEGIN TRANSACTION;\nINSERT INTO #t VALUES (2);');
+	await button(page, 'Execute').click();
+	await expect(page.locator('#sql-5 + form td')).toHaveText('0'); // the transaction survives between the commands
+	await expect(page.locator('body')).toContainText('ROLLBACK TRANSACTION -- Adminer'); // the unfinished transaction
 });
 
 test('Logout', async () => {

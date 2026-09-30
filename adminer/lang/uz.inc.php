@@ -94,7 +94,6 @@ Lang::$translations = array(
 	'DB' => 'MB',
 	'Use' => 'Foydalanish',
 	'Select database' => 'Ma\'lumotlar bazasini tanlash',
-	'Invalid database.' => 'Noto\'g\'ri ma\'lumotlar bazasi.',
 	'Database has been dropped.' => 'Ma\'lumotlar bazasi o\'chirildi.',
 	'Databases have been dropped.' => 'Ma\'lumotlar bazalari o\'chirildi.',
 	'Database has been created.' => 'Ma\'lumotlar bazasi yaratildi.',
@@ -247,7 +246,7 @@ Lang::$translations = array(
 	'Text length' => 'Matn uzunligi',
 	'Action' => 'Amal',
 	'Full table scan' => 'To\'liq jadval skanerlash',
-	'Unable to select the table' => 'Jadvalni tanlab bo\'lmadi',
+	'Unable to select the table.' => 'Jadvalni tanlab bo\'lmadi.',
 	'No rows.' => 'Qatorlar yo\'q.',
 	'%d / ' => '%d / ', // used in SQL query limit and it is followed by another number, e.g. '10 / 50 rows' meaning 10 of 50 rows
 	'%d row(s)' => array('%d qator', '%d qatorlar'),
@@ -312,7 +311,6 @@ Lang::$translations = array(
 	'Schema has been created.' => 'Sxema yaratildi.',
 	'Schema has been altered.' => 'Sxema o\'zgartirildi.',
 	'Schema' => 'Sxema',
-	'Invalid schema.' => 'Noto\'g\'ri sxema.',
 
 	// PostgreSQL sequences support
 	'Sequences' => 'Ketma-ketliklar',

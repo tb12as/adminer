@@ -1,5 +1,5 @@
 import {expect, test} from '@playwright/test';
-import {button, expectExtension, expectNoErrors, goto, link, newPage, setValue} from './adminer.js';
+import {button, expectExtension, expectNoErrors, extension, goto, link, newPage, setValue} from './adminer.js';
 
 test.describe.configure({mode: 'serial'}); // the tests depend on each other, e.g. on being logged in
 
@@ -139,6 +139,7 @@ test('Alter table', async () => {
 test('Create trigger', async () => {
 	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&trigger=albums');
 	await page.locator('[name="Timing"]').selectOption({label: 'AFTER'});
+	await expect(page.locator('[name="Trigger"]')).toHaveValue('albums_ai');
 	await setValue(page, 'Statement', 'UPDATE interprets SET albums = albums + 1 WHERE id = NEW.interpret');
 	await button(page, 'Save').click();
 	await expect(page.locator('body')).toContainText('Trigger has been created.');
@@ -169,13 +170,17 @@ test('Create view', async () => {
 	await expect(page.locator('body')).toContainText('View has been created.');
 });
 
-test('Invalid table', async () => {
+test('Invalid object', async () => {
 	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&table=invalid');
-	await expect(page.locator('body')).toContainText('No tables.');
+	await expect(page.locator('body')).toContainText('Not found.');
 	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&create=invalid');
-	await expect(page.locator('body')).toContainText('No tables.');
+	await expect(page.locator('body')).toContainText('Not found.');
 	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&select=invalid');
-	await expect(page.locator('body')).toContainText('Unable to select the table:');
+	await expect(page.locator('body')).toContainText('Not found.');
+	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&foreign=albums&name=invalid');
+	await expect(page.locator('body')).toContainText('Not found.');
+	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&procedure=invalid');
+	await expect(page.locator('body')).toContainText('Not found.');
 });
 
 test('Schema', async () => {
@@ -199,7 +204,7 @@ test('Clone', async () => {
 	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&select=albums');
 	await page.locator('[name="check[]"]').click();
 	await page.locator('[name="clone"]').click();
-	await page.locator('[name="fields[title]"]').fill('Black and White');
+	await page.locator('[name="fields[title]"]').fill('Černobílá');
 	await button(page, 'Save').click();
 	await expect(page.locator('body')).toContainText('Item 2 has been inserted.');
 });
@@ -207,12 +212,12 @@ test('Clone', async () => {
 test('Pagination', async () => {
 	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&select=albums&limit=1');
 	await expect(page.locator('body')).toContainText('Dangerous');
-	await expect(page.locator('body')).not.toContainText('Black and White');
+	await expect(page.locator('body')).not.toContainText('Černobílá');
 	await expect(page.locator('body')).toContainText('2 rows');
 	await link(page, 'Load more data').click(); // appends the next page by AJAX
-	await expect(page.locator('body')).toContainText('Black and White');
+	await expect(page.locator('body')).toContainText('Černobílá');
 	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&select=albums&limit=1&page=last');
-	await expect(page.locator('body')).toContainText('Black and White');
+	await expect(page.locator('body')).toContainText('Černobílá');
 	await expect(page.locator('body')).not.toContainText('Dangerous');
 	await expect(page.locator("//fieldset[legend='Page']/b")).toHaveText('2'); // the current page, not a link
 });
@@ -248,6 +253,7 @@ test('Search in tables', async () => {
 	await page.locator('[name="search"]').click();
 	await link(page, 'interprets').click();
 	await expect(page.locator('body')).toContainText('Michael Jackson');
+	await expect(page.locator('#table mark').first()).toHaveText('Jackson');
 });
 
 test('Update', async () => {
@@ -268,6 +274,23 @@ test('Modify', async () => {
 	await page.locator('#save').click();
 	await expect(page.locator('body')).toContainText('1 item has been affected.');
 	await expect(page.locator('body')).toContainText('Bad');
+});
+
+test('SQL command modify', async () => {
+	if (extension()) {
+		return; // the original column name required to identify the value is reported only by MySQLi
+	}
+	// the cross join displays each album twice, both cells must be refreshed
+	const query = 'SELECT a.id, a.title FROM albums a, albums b ORDER BY a.id, b.id';
+	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&sql=' + encodeURIComponent(query));
+	await button(page, 'Execute').click();
+	const cells = page.locator('td[data-name$="[title]"]');
+	await expect(cells).toHaveCount(4);
+	await cells.first().click({modifiers: ['Control']});
+	await cells.first().locator('input').fill('Modified');
+	await page.locator('[name="save"]').click();
+	await expect(page.locator('#ajaxstatus')).toContainText('1 item has been affected.'); // saved without reloading the page
+	await expect(cells.nth(1)).toHaveText('Modified'); // the second row displays the same album
 });
 
 test('Delete', async () => {
@@ -319,10 +342,11 @@ test('Import and export CSV', async () => {
 
 test('Bulk table operations', async () => {
 	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test&sql=' + encodeURIComponent(
-		'CREATE DATABASE adminer_test2; CREATE TABLE bulk_test (id int); CREATE TABLE bulk_test2 (id int);'
+		'DROP DATABASE IF EXISTS adminer_test2; CREATE DATABASE adminer_test2; CREATE TABLE bulk_test (id int); CREATE TABLE bulk_test2 (id int);'
 		+ ' INSERT INTO bulk_test VALUES (1)'
 	));
 	await button(page, 'Execute').click();
+	await page.waitForLoadState(); // the result is flushed while the queries run, navigating away earlier aborts them
 	await goto(page, '/adminer/?server=localhost:3307&username=ODBC&db=adminer_test');
 	// every operation redirects back to this page with the checkboxes cleared
 	for (const [name, label] of [['', 'Analyze'], ['optimize', 'Optimize'], ['check', 'Check'], ['repair', 'Repair']]) {

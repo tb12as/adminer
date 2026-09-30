@@ -2,12 +2,13 @@
 namespace Adminer;
 
 class Adminer {
-	/** @var Adminer|Plugins */ static $instance;
+	/** @var Adminer|Plugins|null */ static $instance;
 	/** @visibility protected(set) */ public string $error = ''; // HTML
 	/** @var array<string, string[]|string> */ private array $values = array(); // [table => options or one description]
+	/** @var true[] */ private array $described = array(); // [column => true] of the columns replaced by rowDescriptions()
 
 	function name(): string {
-		return "<a href='https://www.adminer.org/editor/'" . target_blank() . " id='h1'><img src='" . DIR . "static/logo.png' width='24' height='24' alt='' id='logo'>" . lang('Editor') . "</a>";
+		return "<a href='https://www.adminer.org/editor/'" . target_blank() . " id='h1'><img src='" . DIR . "static/logo.svg' width='24' height='24' alt='' id='logo'>" . lang('Editor') . "</a>";
 	}
 
 	//! driver, ns
@@ -25,6 +26,10 @@ class Adminer {
 
 	function bruteForceKey(): string {
 		return $_SERVER["REMOTE_ADDR"];
+	}
+
+	function verifyLoginToken(): bool {
+		return true;
 	}
 
 	function serverName(?string $server): string {
@@ -81,9 +86,22 @@ class Adminer {
 	}
 
 	function serviceWorker(): void {
-		if (!defined('Adminer\DIR')) {
-			service_worker();
-		}
+		service_worker();
+	}
+
+	/** @return mixed[] */
+	function manifest(): array {
+		$host = $_SERVER["HTTP_HOST"] ?: $_SERVER["SERVER_NAME"];
+		$self = preg_replace('~\?.*~', '', ME) ?: '.';
+		return array(
+			'name' => "Adminer Editor" . ($host != "" ? " - $host" : ""),
+			'short_name' => 'Adminer Editor',
+			'description' => lang('Data editing in a single PHP file'),
+			'start_url' => $self,
+			'scope' => $self,
+			'display' => 'minimal-ui',
+			'icons' => array(array('src' => DIR . "static/logo.svg", 'sizes' => 'any', 'type' => 'image/svg+xml')),
+		);
 	}
 
 	function head(?bool $dark = null): bool {
@@ -205,9 +223,9 @@ ORDER BY ORDINAL_POSITION", null, "") as $row
 	}
 
 	function rowDescription(string $table): string {
-		// first varchar column
+		// first string column
 		foreach (fields($table) as $field) {
-			if (preg_match("~varchar|character varying~", $field["type"])) {
+			if (preg_match("~char|text~", $field["type"])) {
 				return idf_escape($field["field"]);
 			}
 		}
@@ -234,6 +252,7 @@ ORDER BY ORDINAL_POSITION", null, "") as $row
 					$descriptions = get_key_vals("SELECT $id, $name FROM " . table($table) . " WHERE $id IN (" . implode(", ", $ids) . ")");
 				}
 				// use the descriptions
+				$this->described[$key] = true;
 				foreach ($rows as $n => $row) {
 					if (isset($row[$key])) {
 						$return[$n][$key] = (string) $descriptions[$row[$key]];
@@ -249,6 +268,9 @@ ORDER BY ORDINAL_POSITION", null, "") as $row
 
 	function selectVal(?string $val, ?string $link, array $field, ?string $original): string {
 		$return = "$val";
+		if (isset($this->described[$field["field"]]) && $original !== null) {
+			$return = shorten_utf8($original, max(0, +adminer()->selectLengthProcess())); // the foreign key column is usually a number which is not shortened
+		}
 		$link = h($link);
 		if (is_blob($field) && !is_utf8($val)) {
 			$return = lang('%d byte(s)', strlen($original));

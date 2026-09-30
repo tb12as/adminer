@@ -72,7 +72,7 @@ if (function_exists("get_magic_quotes_runtime") && get_magic_quotes_runtime()) {
 if (function_exists('set_time_limit')) { // can be disabled
 	set_time_limit(0);
 }
-ini_set("precision", '16'); // 16 - IEEE 754 has 15.95 decimal digits for double
+ini_set("precision", PHP_VERSION_ID >= 70100 ? -1 : 16); // -1 - shortest representation preserving the value, 16 - short output losing precision of 17 digits values, see PdoResult::normalize()
 
 include DIR . "include/lang.inc.php";
 if (defined('Adminer\DIR')) { // the compiled version has the translations inlined
@@ -112,6 +112,10 @@ define(
 		// an empty db= means the list of databases in a driver with a single database, the same way as an empty ns= means the database overview
 		. (isset($_GET["db"]) ? 'db=' . url_escape(DB) . '&' . (isset($_GET["ns"]) ? "ns=" . url_escape($_GET["ns"]) . "&" : "") : '')
 );
+
+if (isset($_GET["manifest"])) {
+	include DIR . "manifest.inc.php";
+}
 
 include DIR . "include/design.inc.php";
 include DIR . "include/xxtea.inc.php";

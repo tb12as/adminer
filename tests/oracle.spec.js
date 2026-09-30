@@ -24,7 +24,7 @@ test.afterAll(async () => {
 test('Login', async () => {
 	await goto(page, '/adminer/');
 	await page.locator('[name="lang"]').selectOption({label: 'English'}); // submits the form
-	await page.locator('[name="auth[driver]"]').selectOption({label: 'Oracle beta'});
+	await page.locator('[name="auth[driver]"]').selectOption({label: 'Oracle'});
 	await page.locator('[name="auth[server]"]').fill(server);
 	await page.locator('#username').fill('ODBC');
 	await page.locator('[name="auth[password]"]').fill('ODBC');
@@ -118,16 +118,18 @@ test('Create view', async () => {
 	await expect(page.locator('body')).toContainText('View has been created.');
 });
 
-test('Invalid table', async () => {
+test('Invalid object', async () => {
 	await goto(page, db + '&table=invalid');
-	await expect(page.locator('body')).toContainText('No tables.');
+	await expect(page.locator('body')).toContainText('Not found.');
 	await goto(page, db + '&select=invalid');
-	await expect(page.locator('body')).toContainText('Unable to select the table:');
+	await expect(page.locator('body')).toContainText('Not found.');
+	await goto(page, db + '&foreign=albums&name=invalid');
+	await expect(page.locator('body')).toContainText('Not found.');
 });
 
 test('Invalid database', async () => {
 	await goto(page, root + '&db=invalid');
-	await expect(page.locator('body')).toContainText('Invalid database.');
+	await expect(page.locator('body')).toContainText('ORA-01435'); // the error of the driver is more specific than Not found.
 });
 
 test('Insert', async () => {
@@ -149,7 +151,7 @@ test('Clone', async () => {
 	await page.locator('[name="check[]"]').click();
 	await page.locator('[name="clone"]').click();
 	await page.locator('[name="fields[id]"]').fill('2');
-	await page.locator('[name="fields[title]"]').fill('Black and White');
+	await page.locator('[name="fields[title]"]').fill('Černobílá');
 	await button(page, 'Save').click();
 	await expect(page.locator('body')).toContainText('1 item has been affected.'); // the clone is INSERT ... SELECT
 });
@@ -158,12 +160,12 @@ test('Pagination', async () => {
 	// the offset is built by a rownum column which must not be printed
 	await goto(page, db + '&select=albums&order[0]=id&limit=1');
 	await expect(page.locator('body')).toContainText('Dangerous');
-	await expect(page.locator('body')).not.toContainText('Black and White');
+	await expect(page.locator('body')).not.toContainText('Černobílá');
 	await link(page, 'Load more data').click(); // appends the next page by AJAX
-	await expect(page.locator('body')).toContainText('Black and White');
+	await expect(page.locator('body')).toContainText('Černobílá');
 	await expect(page.locator('body')).not.toContainText('RNUM');
 	await goto(page, db + '&select=albums&order[0]=id&limit=1&page=1');
-	await expect(page.locator('body')).toContainText('Black and White');
+	await expect(page.locator('body')).toContainText('Černobílá');
 	await expect(page.locator('body')).not.toContainText('Dangerous');
 	await expect(page.locator('body')).not.toContainText('RNUM');
 });
@@ -177,7 +179,7 @@ test('Select', async () => {
 	await page.locator('[name="order[0]"]').selectOption({label: 'interpret'});
 	await button(page, 'Select').click();
 	await expect(page.locator('body')).toContainText('Dangerous');
-	await expect(page.locator('body')).not.toContainText('Black and White');
+	await expect(page.locator('body')).not.toContainText('Černobílá');
 });
 
 test('Explain', async () => {
@@ -200,6 +202,7 @@ test('Search in tables', async () => {
 	await page.locator('[name="search"]').click();
 	await link(page, 'interprets').click();
 	await expect(page.locator('body')).toContainText('Michael Jackson');
+	await expect(page.locator('#table mark').first()).toHaveText('Jackson');
 });
 
 test('Search in tables with special types', async () => {
@@ -211,12 +214,14 @@ test('Search in tables with special types', async () => {
 		"INSERT INTO \"types\" VALUES (1, HEXTORAW('61626333'), 'abc3', HEXTORAW('61626333'), DATE '2020-01-03', 'abc3')"
 	));
 	await button(page, 'Execute').click();
+	await page.waitForLoadState(); // the result is flushed while the queries run, navigating away earlier aborts them
 	await goto(page, db);
 	// the LOB and binary columns can't be compared with a string, they must be skipped instead of reported
 	for (const [op, query] of [['LIKE %%', 'abc'], ['=', 'abc3']]) {
 		await page.locator('[name="op"]').selectOption(op);
 		await page.locator('[name="query"]').fill(query);
 		await page.locator('[name="search"]').click();
+		await page.waitForLoadState();
 		await expect(page.locator('.error')).toHaveCount(0);
 		await expect(page.locator("li a[href*='select=types&where']")).toBeVisible();
 	}

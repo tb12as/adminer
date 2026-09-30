@@ -1183,12 +1183,12 @@ function submitKeydown(button, event) {
 	}
 	if (isCtrl(event) && event.key == 'Enter' && target.matches('select, textarea, input')) {
 		target.blur();
-		if (target.form[button]) {
-			target.form[button].click();
-		} else {
-			if (fire(target.form, 'submit')) { // submit() doesn't dispatch the event
-				target.form.submit();
-			}
+		// click the button highlighted as the default one to send its name and to run its onclick handler
+		const submit = (button ? target.form[button] : findDefaultSubmit(target));
+		if (submit) {
+			submit.click();
+		} else if (fire(target.form, 'submit')) { // submit() doesn't dispatch the event
+			target.form.submit();
 		}
 		target.focus();
 		return false;
@@ -1211,7 +1211,7 @@ function bodyKeydown(event) {
 	}
 }
 
-/** Toggle visibility by .toggle links, close the menu, open form to a new window on Ctrl+click or Shift+click
+/** Toggle visibility by .toggle links, keep the AJAX message on the screen, close the menu, open form to a new window on Ctrl+click or Shift+click
 * @param {MouseEvent} event
 */
 function bodyClick(event) {
@@ -1222,6 +1222,9 @@ function bodyClick(event) {
 	if (toggler) {
 		toggle(toggler.getAttribute('href').slice(1));
 		event.preventDefault();
+	}
+	if (target.closest && target.closest('#ajaxstatus')) { // the user works with the message, keep it on the screen
+		clearTimeout(stickyTimeout);
 	}
 	if ((isCtrl(event) || event.shiftKey) && target.type == 'submit' && target.matches('input')) { // type - the target can be a text node without matches()
 		target.form.target = '_blank';
@@ -1416,9 +1419,8 @@ function fieldChange() {
 */
 function ajax(url, callback, data, message) {
 	const request = new XMLHttpRequest();
-	const ajaxStatus = qs('#ajaxstatus');
 	// empty the live region instead of hiding it, display: none would remove it from the accessibility tree
-	ajaxStatus.innerHTML = (message ? '<div class="message">' + message + '</div>' : '');
+	ajaxStatus(message ? '<div class="message">' + message + '</div>' : '');
 	request.open((data ? 'POST' : 'GET'), url);
 	if (data) {
 		request.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
@@ -1431,7 +1433,7 @@ function ajax(url, callback, data, message) {
 			if (/^2/.test(request.status)) {
 				callback(request);
 			} else if (message !== null) {
-				ajaxStatus.innerHTML = (request.status ? request.responseText : '<div class="error">' + offlineMessage + '</div>');
+				ajaxStatus(request.status ? request.responseText : '<div class="error">' + offlineMessage + '</div>');
 			}
 		}
 	};
@@ -1475,15 +1477,28 @@ function ajaxForm(message) {
 		data = '';
 	}
 	ajax(url, request => {
-		const ajaxstatus = qs('#ajaxstatus');
-		setHtml('ajaxstatus', request.responseText);
-		if (qs('.message', ajaxstatus)) { // success
+		if (qs('.message', ajaxStatus(request.responseText))) { // success
 			editChanged = null;
 		}
-		adminerHighlighter(qsa('code', ajaxstatus));
-		messagesPrint(ajaxstatus);
 	}, data, message);
 	return false;
+}
+
+let stickyTimeout;
+
+/** Display the response of an AJAX request in the status area
+* @param {string} html
+* @return {HTMLElement} the status area
+*/
+function ajaxStatus(html) {
+	const ajaxstatus = qs('#ajaxstatus');
+	setHtml('ajaxstatus', html);
+	adminerHighlighter(qsa('code', ajaxstatus));
+	messagesPrint(ajaxstatus);
+	alterClass(ajaxstatus, 'sticky', html); // display the message also in a scrolled page but release it soon to not cover the content
+	clearTimeout(stickyTimeout);
+	stickyTimeout = setTimeout(() => alterClass(ajaxstatus, 'sticky'), 5000);
+	return ajaxstatus;
 }
 
 
@@ -1501,6 +1516,9 @@ function selectClick(event, text, warning) {
 	if (!isCtrl(event) || (td.firstElementChild && td.firstElementChild.matches('input, textarea')) || target.matches('a')) {
 		return;
 	}
+	const form = td.closest('form');
+	// the same row can be displayed more than once in the result of the SQL command so the cells have no unique ID there
+	const name = td.dataset.name || td.id;
 	if (warning) {
 		alert(warning);
 		return true;
@@ -1516,7 +1534,10 @@ function selectClick(event, text, warning) {
 	};
 
 	const pos = getSelection().anchorOffset;
-	let value = (td.firstChild && td.firstChild.alt) || td.textContent;
+	let value = td.dataset.value;
+	if (value === undefined) {
+		value = (td.firstChild && td.firstChild.alt) || td.textContent;
+	}
 	const tdStyle = window.getComputedStyle(td, null);
 
 	input.style.width = Math.max(td.clientWidth - parseFloat(tdStyle.paddingLeft) - parseFloat(tdStyle.paddingRight), (text ? 200 : 20)) + 'px';
@@ -1524,27 +1545,24 @@ function selectClick(event, text, warning) {
 	if (text) {
 		input.rows = value.split('\n').length;
 	}
-	if (qsa('i', td).length) { // <i> - NULL
-		value = '';
-	}
 	td.innerHTML = '';
 	td.append(input);
-	const save = qs('#save');
+	const save = (form && form['save']) || qs('#save'); // each result of the SQL command has its own button
 	if (save) { // missing if a plugin returns false from selectCommandPrint()
 		save.disabled = false;
 	}
 	setupSubmitHighlight(td);
 	input.focus();
 	if (text == 2) { // long text
-		return ajax(location.href + '&' + urlEscape(td.id) + '=', request => {
+		return ajax(location.href + '&' + urlEscape(name) + '=', request => {
 			if (request.responseText) {
 				input.value = request.responseText;
-				input.name = td.id;
+				input.name = name;
 			}
 		});
 	}
 	input.value = value;
-	input.name = td.id;
+	input.name = name;
 	input.selectionStart = pos;
 	input.selectionEnd = pos;
 	return true;

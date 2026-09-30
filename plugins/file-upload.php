@@ -52,10 +52,12 @@ class AdminerFileUpload extends Adminer\Plugin {
 
 	protected $translations = array(
 		'cs' => array('' => 'Políčka končící na "_path" upravuje pomocí <input type="file"> a odkazuje na nahrané soubory z výpisu'),
-		'de' => array('' => 'Bearbeiten Sie Felder, die mit "_path" enden, um <input type="file"> und verknüpfen Sie sie mit den hochgeladenen Dateien beim Select'),
-		'pl' => array('' => 'Edytuj pola kończące się na "_path" za pomocą <input type="file"> i link do przesłanych plików z wybierz'),
-		'ro' => array('' => 'Modificați câmpurile care se termină cu "_path" prin <input type="file"> și creați un link către fișierele încărcate din select'),
-		'ja' => array('' => '列名が "_path" で終わる列を <input type="file"> で変更し、"選択" からアップロードされたファイルにリンク'),
+		'de' => array('' => 'Bearbeiten Sie Felder, die mit "_path" enden, mit <input type="file"> und verknüpfen Sie sie mit den hochgeladenen Dateien beim Select'),
 		'hr' => array('' => 'Uređuje polja koja završavaju s "_path" putem <input type="file"> i povezuje ih s učitanim datotekama'),
+		'ja' => array('' => '列名が "_path" で終わる列を <input type="file"> で変更し、一覧からアップロードされたファイルにリンク'), // Claude Opus 5
+		'pl' => array('' => 'Edytuj pola kończące się na "_path" za pomocą <input type="file"> oraz linkuj do przesłanych plików w widoku danych'), // Claude Opus 5
+		'ro' => array('' => 'Modificați câmpurile care se termină cu "_path" prin <input type="file"> și creați un link către fișierele încărcate din select'),
+		'sk' => array('' => 'Upravuje políčka končiace na "_path" pomocou <input type="file"> a odkazuje na nahrané súbory z výpisu'), // Claude Opus 5
+		'zh' => array('' => '用 <input type="file"> 编辑以 "_path" 结尾的字段，并在选择数据时链接到已上传的文件'), // Claude Opus 5
 	);
 }

@@ -32,12 +32,21 @@ if ($_POST && !$error) {
 	}
 }
 
-page_header(($EVENT != "" ? lang('Alter event') . ": " . h($EVENT) : lang('Create event')), $error);
-
+$not_found = false;
 if (!$row && $EVENT != "") {
 	$rows = get_rows("SELECT * FROM information_schema.EVENTS WHERE EVENT_SCHEMA = " . q(DB) . " AND EVENT_NAME = " . q($EVENT));
+	$not_found = !$rows;
 	$row = reset($rows);
 }
+
+page_header(
+	($EVENT != "" ? lang('Alter event') . ": " . h($EVENT) : lang('Create event')),
+	$error,
+	"#events",
+	"",
+	$not_found,
+	doc_link(array('sql' => "create-event.html"))
+);
 ?>
 
 <form action="" method="post">

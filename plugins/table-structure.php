@@ -46,6 +46,10 @@ class AdminerTableStructure extends Adminer\Plugin {
 			'Collation' => 'Porovnávání',
 			'Comment' => 'Komentář',
 			'Auto Increment' => 'Auto Increment',
+			'Nullable' => 'Nullable',
+			'Default' => 'Výchozí',
+			'Yes' => 'Ano',
+			'No' => 'Ne',
 		),
 		'de' => array(
 			'' => 'Erweiterte Ausgabe der Tabellenstruktur',
@@ -54,6 +58,22 @@ class AdminerTableStructure extends Adminer\Plugin {
 			'Collation' => 'Kollation',
 			'Comment' => 'Kommentar',
 			'Auto Increment' => 'Auto-Inkrement',
+		),
+		'hr' => array(
+			'' => 'Prošireni prikaz strukture tablice',
+			'Column' => 'Stupac',
+			'Type' => 'Tip',
+			'Collation' => 'Uspoređivanje',
+			'Comment' => 'Komentar',
+			'Auto Increment' => 'Auto-inkrement',
+		),
+		'ja' => array(
+			'' => 'テーブル構造を拡張表示',
+			'Column' => 'カラム',
+			'Type' => '型',
+			'Collation' => 'コレーション',
+			'Comment' => 'コメント',
+			'Auto Increment' => '連番',
 		),
 		'pl' => array(
 			'' => 'Rozszerzone wyjście struktury tabeli',
@@ -71,21 +91,20 @@ class AdminerTableStructure extends Adminer\Plugin {
 			'Comment' => 'Comentariu',
 			'Auto Increment' => 'Creșterea automată',
 		),
-		'ja' => array(
-			'' => 'テーブル構造を拡張表示',
-			'Column' => 'カラム',
-			'Type' => '型',
-			'Collation' => 'コレーション',
-			'Comment' => 'コメント',
-			'Auto Increment' => '連番',
+		'sk' => array(
+			'' => 'Rozšírený výpis štruktúry tabuľky', // Claude Opus 5
 		),
-		'hr' => array(
-			'' => 'Prošireni prikaz strukture tablice',
-			'Column' => 'Stupac',
-			'Type' => 'Tip',
-			'Collation' => 'Uspoređivanje',
-			'Comment' => 'Komentar',
-			'Auto Increment' => 'Auto-inkrement',
+		'zh' => array(
+			'' => '扩展显示表结构', // Claude Opus 5
+			'Column' => '列', // Claude Opus 5
+			'Type' => '类型', // Claude Opus 5
+			'Collation' => '校对', // Claude Opus 5
+			'Nullable' => '可为空', // Claude Opus 5
+			'Default' => '默认值', // Claude Opus 5
+			'Comment' => '注释', // Claude Opus 5
+			'Auto Increment' => '自动增量', // Claude Opus 5
+			'Yes' => '是', // Claude Opus 5
+			'No' => '否', // Claude Opus 5
 		),
 	);
 }

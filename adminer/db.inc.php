@@ -95,10 +95,10 @@ if (adminer()->homepage()) {
 			}
 			echo "<div class='scrollable'>\n";
 			echo "<table class='nowrap checkable odds'" . on('click', 'tableClick') . on('dblclick', 'tableClick') . ">\n";
-			echo '<thead><tr class="wrap">';
+			echo '<thead><tr>';
 			echo '<td class="hover"><input id="check-all" type="checkbox" class="jsonly" title="' . lang('All') . '"' . on('click', 'formCheck', '^(tables|views)\[') . '>';
 			// without $order, the tables are sorted by name, except in SQLite which puts the sqlite_ tables last
-			echo '<th' . (!$order && JUSH != 'sqlite' ? " aria-sort='ascending'" : '') . '><a href="' . h(substr($me, 0, -1)) . '">' . lang('Table') . '</a>';
+			echo '<th class="sticky"' . (!$order && JUSH != 'sqlite' ? " aria-sort='ascending'" : '') . '><a href="' . h(substr($me, 0, -1)) . '">' . lang('Table') . '</a>';
 			$columns = array("Engine" => array(lang('Engine') . doc_link(array('sql' => 'storage-engines.html'))));
 			if (collations()) {
 				$columns["Collation"] = array(lang('Collation') . doc_link(array('sql' => 'charset-charsets.html', 'mariadb' => 'supported-character-sets-and-collations/')));
@@ -131,7 +131,9 @@ if (adminer()->homepage()) {
 				lang('Select data'),
 			);
 			if (support("comment")) {
-				$columns["Comment"] = array(lang('Comment') . doc_link(array('sql' => 'show-table-status.html', 'pgsql' => 'functions-info.html#FUNCTIONS-INFO-COMMENT-TABLE')));
+				$columns["Comment"] = array(
+					lang('Comment') . doc_link(array('sql' => 'show-table-status.html', 'pgsql' => 'functions-info.html#FUNCTIONS-INFO-COMMENT-TABLE', 'cockroach' => 'comment-on')),
+				);
 			}
 			$asc_columns = array('Engine', 'Collation', 'Comment'); // the other columns are sorted descending
 			foreach ($columns as $key => $column) {
@@ -155,7 +157,7 @@ if (adminer()->homepage()) {
 				$status = ($full ? $status : array('Engine' => $status));
 				$id = h("Table-" . $name);
 				echo '<tr><td class="hover">' . checkbox(($view ? "views[]" : "tables[]"), $name, in_array("$name", $tables_views, true), "", "", "", $id); // "$name" to check numeric table names
-				echo '<th>' . (support("table") || support("indexes")
+				echo '<th class="sticky">' . (support("table") || support("indexes")
 					? "<a href='" . h(ME) . "table=" . url_escape($name) . "' title='" . lang('Show structure') . "' id='$id'>" . h($name) . '</a>'
 					: h($name)
 				);
@@ -186,14 +188,14 @@ if (adminer()->homepage()) {
 				echo "\n";
 			}
 
-			echo "<tr><td class='hover'><th>" . lang('%d in total', count($tables_list));
+			echo "<tr><td class='hover'><th class='sticky'>" . lang('%d in total', count($tables_list));
 			echo "<td>" . h(JUSH == "sql" ? get_val("SELECT @@default_storage_engine") : "");
 			echo (collations() ? "<td>" . h(db_collation(DB, collations())) : '');
 			if ($full && function_exists('Adminer\db_status')) {
 				$sums = db_status();
 			}
 			foreach ($sums as $key => $sum) {
-				echo ($columns[$key] ? "<td align='right' id='sum-$key'>" . ($full ? format_number($sum) : "") : "");
+				echo ($columns[$key] ? "<td align='right' id='sum-$key'>" . ($full ? adminer()->formatSizeValue($sum) : "") : "");
 			}
 			echo "\n";
 
@@ -245,7 +247,7 @@ if (adminer()->homepage()) {
 			$routines = routines();
 			if ($routines) {
 				echo "<table class='odds'>\n";
-				echo '<thead><tr><th>' . lang('Name') . '<td>' . lang('Type') . '<td>' . lang('Return type') . "<td class='hover'><tbody>\n";
+				echo '<thead><tr><th>' . lang('Name') . '<th>' . lang('Type') . '<th>' . lang('Return type') . "<td class='hover'><tbody>\n";
 				foreach ($routines as $row) {
 					$name = ($row["SPECIFIC_NAME"] == $row["ROUTINE_NAME"] ? "" : "&name=" . url_escape($row["ROUTINE_NAME"])); // not computed on the pages to be able to print the header first
 					echo '<tr>';
@@ -304,7 +306,7 @@ if (adminer()->homepage()) {
 			$rows = get_rows("SHOW EVENTS");
 			if ($rows) {
 				echo "<table>\n";
-				echo "<thead><tr><th>" . lang('Name') . "<td>" . lang('Schedule') . "<td>" . lang('Start') . "<td>" . lang('End') . "<td class='hover'><tbody>\n";
+				echo "<thead><tr><th>" . lang('Name') . "<th>" . lang('Schedule') . "<th>" . lang('Start') . "<th>" . lang('End') . "<td class='hover'><tbody>\n";
 				foreach ($rows as $row) {
 					echo "<tr>";
 					echo "<th>" . h($row["Name"]);
@@ -321,6 +323,26 @@ if (adminer()->homepage()) {
 				}
 			}
 			echo '<p class="links hover"><a href="' . h(ME) . 'event=">' . lang('Create event') . "</a>\n";
+			echo "</div>\n";
+		}
+	} elseif (support("extension")) { // an extension belongs to the database, it only has its objects in a schema
+		$extensions = get_rows("SELECT e.extname, e.extversion, n.nspname, obj_description(e.oid, 'pg_extension') AS comment
+FROM pg_extension e
+JOIN pg_namespace n ON n.oid = e.extnamespace
+ORDER BY e.extname"); // not extnamespace::regnamespace which needs PostgreSQL 9.5
+		if ($extensions) {
+			echo "<div>\n";
+			echo "<h3 id='extensions'>" . lang('Extensions') . "</h3>\n";
+			echo "<table class='odds'>\n";
+			echo "<thead><tr><th>" . lang('Name') . "<th>" . lang('Version') . "<th>" . lang('Schema') . "<th>" . lang('Comment') . "<tbody>\n";
+			foreach ($extensions as $row) {
+				echo "<tr><th><code class='jush-pgsqlext'>" . h($row["extname"]) . "</code>"; // JUSH links the contrib modules to the documentation and the rest to PGXN
+				echo "<td>" . h($row["extversion"]);
+				echo "<td><a href='" . h(substr(ME, 0, -1) . url_escape($row["nspname"])) . "'>" . h($row["nspname"]) . "</a>"; // ME ends with ns=& on this page
+				echo "<td>" . h($row["comment"]);
+				echo "\n";
+			}
+			echo "</table>\n";
 			echo "</div>\n";
 		}
 	}

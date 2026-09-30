@@ -1,13 +1,6 @@
 <?php
 namespace Adminer;
 
-if (isset($_GET["status"])) {
-	$_GET["variables"] = $_GET["status"];
-}
-if (isset($_GET["import"])) {
-	$_GET["sql"] = $_GET["import"];
-}
-
 if (DB == "" && isset($_GET["ns"])) {	// menu form for changing DB preserves ns which leads to this combination
 	redirect(remove_from_uri('ns'));
 }
@@ -24,8 +17,7 @@ if (
 		set_session("dbs", null);
 	}
 	if (DB != "") {
-		header("HTTP/1.1 404 Not Found");
-		page_header(lang('Database') . ": " . h(DB), lang('Invalid database.'), true);
+		page_header(lang('Database') . ": " . h(DB), adminer()->error(), true, "", "db");
 	} else {
 		if (!isset($_GET["db"]) && support("single_db")) { // there is nothing to choose from, take the user to the only database
 			$databases = adminer()->databases();
@@ -67,9 +59,9 @@ if (
 				// the databases are sorted by name, except in MS SQL which doesn't order them at all
 				. "<th" . (JUSH != 'mssql' ? " aria-sort='ascending'" : "") . ">" . lang('Database')
 				. (get_session("dbs") !== null ? " - <a href='" . h(ME) . "refresh=1'>" . lang('Refresh') . "</a>" : "")
-				. "<td>" . lang('Collation')
-				. "<td>" . lang('Tables')
-				. "<td>" . lang('Size') . " - <a href='" . h(ME) . "dbsize=1'" . on('click', 'ajaxSetHtml', ME . "script=connect") . ">" . lang('Compute') . "</a>"
+				. "<th>" . lang('Collation')
+				. "<th>" . lang('Tables')
+				. "<th>" . lang('Size') . " - <a href='" . h(ME) . "dbsize=1'" . on('click', 'ajaxSetHtml', ME . "script=connect") . ">" . lang('Compute') . "</a>"
 				. "<tbody>\n"
 			;
 
@@ -168,10 +160,7 @@ if (support("scheme")) {
 			redirect(preg_replace('~&db=[^&]+~', '\0&ns=' . url_escape(get_schema()), relative_uri()));
 		}
 		if (!set_schema($_GET["ns"])) {
-			header("HTTP/1.1 404 Not Found");
-			page_header(lang('Schema') . h(": $_GET[ns]"), lang('Invalid schema.'), true);
-			page_footer("ns");
-			exit;
+			page_header(lang('Schema') . h(": $_GET[ns]"), adminer()->error(), true, "", "ns");
 		}
 	}
 }

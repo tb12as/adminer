@@ -74,7 +74,6 @@ Lang::$translations = array(
 	'Database' => 'Duomenų bazė',
 	'Use' => 'Naudoti',
 	'Select database' => 'Pasirinkti duomenų bazę',
-	'Invalid database.' => 'Neteisinga duomenų bazė.',
 	'Database has been dropped.' => 'Duomenų bazė panaikinta.',
 	'Databases have been dropped.' => 'Duomenų bazės panaikintos.',
 	'Database has been created.' => 'Duomenų bazė sukurta.',
@@ -217,7 +216,7 @@ Lang::$translations = array(
 	'Limit' => 'Limitas',
 	'Text length' => 'Teksto ilgis',
 	'Action' => 'Veiksmas',
-	'Unable to select the table' => 'Neįmanoma atrinkti lentelės',
+	'Unable to select the table.' => 'Neįmanoma atrinkti lentelės.',
 	'No rows.' => 'Nėra įrašų.',
 	'%d row(s)' => array('%d įrašas', '%d įrašai', '%d įrašų'),
 	'Page' => 'Puslapis',
@@ -272,7 +271,6 @@ Lang::$translations = array(
 	'Schema has been created.' => 'Schema sukurta.',
 	'Schema has been altered.' => 'Schema pakeista.',
 	'Schema' => 'Schema',
-	'Invalid schema.' => 'Neteisinga schema.',
 
 	// PostgreSQL sequences support
 	'Sequences' => 'Sekos',

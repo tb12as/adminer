@@ -44,9 +44,11 @@ class AdminerLoginIp extends Adminer\Plugin {
 	protected $translations = array(
 		'cs' => array('' => 'Zkontroluje IP adresu a povolí prázdné heslo'),
 		'de' => array('' => 'Überprüft die IP-Adresse und lässt ein leeres Passwort zu'),
-		'pl' => array('' => 'Sprawdzaj adres IP i zezwakaj na puste hasło'),
-		'ro' => array('' => 'Verificați adresa IP și permiteți parola goală'),
-		'ja' => array('' => 'IP アドレスの確認、及び空パスワードの許可'),
 		'hr' => array('' => 'Provjerava IP adresu i dopušta praznu lozinku'),
+		'ja' => array('' => 'IP アドレスの確認、及び空パスワードの許可'),
+		'pl' => array('' => 'Sprawdzaj adres IP i zezwalaj na puste hasło'),
+		'ro' => array('' => 'Verificați adresa IP și permiteți parola goală'),
+		'sk' => array('' => 'Skontroluje IP adresu a povolí prázdne heslo'), // Claude Opus 5
+		'zh' => array('' => '检查 IP 地址并允许空密码'), // Claude Opus 5
 	);
 }

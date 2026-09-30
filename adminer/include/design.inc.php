@@ -3,10 +3,16 @@ namespace Adminer;
 
 /** Print HTML header
 * @param string $title used in title, breadcrumb and heading, should be HTML escaped
-* @param mixed $breadcrumb ["key" => "link", "key2" => ["link", "desc"]], null for nothing, false for driver only, true for driver and server
+* @param mixed $breadcrumb ["key" => "link", "key2" => ["link", "desc"]], "#section" of the database page, null for nothing, false for driver only, true for driver and server
 * @param string $title2 used after colon in title and heading, should be HTML escaped
+* @param bool|string $not_found the object in the URL doesn't exist - print only the error and finish the page, a string is passed to page_footer()
+* @param string $doc HTML code of doc_link()
 */
-function page_header(string $title, string $error = "", $breadcrumb = array(), string $title2 = ""): void {
+function page_header(string $title, string $error = "", $breadcrumb = array(), string $title2 = "", $not_found = false, string $doc = ""): void {
+	if ($not_found) {
+		header("HTTP/1.1 404 Not Found");
+		$error = ($error ?: lang('Not found.')); // the error of the driver is more specific
+	}
 	page_headers();
 	if (is_ajax() && $error) {
 		page_messages($error);
@@ -52,7 +58,11 @@ function page_header(string $title, string $error = "", $breadcrumb = array(), s
 	if (adminer()->head($dark)) {
 		echo "<link rel='icon' href='data:image/gif;base64,"
 			. "R0lGODlhEAAQAJEAAAQCBPz+/PwCBAROZCH5BAEAAAAALAAAAAAQABAAAAI2hI+pGO1rmghihiUdvUBnZ3XBQA7f05mOak1RWXrNq5nQWHMKvuoJ37BhVEEfYxQzHjWQ5qIAADs='>\n";
-		echo "<link rel='apple-touch-icon' href='" . DIR . "static/logo.png'>\n";
+		echo "<link rel='apple-touch-icon' href='" . DIR . "static/logo.svg'>\n";
+	}
+	if (adminer()->manifest()) {
+		// crossorigin sends the cookies so that the manifest is in the selected language, the URL is without parameters to be the same on all pages
+		echo "<link rel='manifest' href='" . h(preg_replace('~\?.*~', '', ME) . "?manifest=") . "' crossorigin='use-credentials'>\n";
 	}
 	foreach ($css as $url => $mode) {
 		$attrs = ($mode == 'dark' && !$dark
@@ -115,12 +125,18 @@ const shortcutLabels = {
 			echo "$server\n";
 		} else {
 			echo "<a href='" . h($link . (DB != "" && support("single_db") ? "&db=" : "")) . "' accesskey='1' title='Alt+Shift+1'>$server</a> » ";
+			$section = "";
+			if (is_string($breadcrumb)) {
+				$section = $breadcrumb;
+				$breadcrumb = array();
+			}
 			if ($_GET["ns"] != "" || (DB != "" && is_array($breadcrumb))) {
-				echo '<a href="' . h($link . "&db=" . url_escape(DB) . (support("scheme") ? "&ns=" : "") . (support("single_table") ? "&select=" : "")) . '">' . h(DB) . '</a> » ';
+				$db_link = "$link&db=" . url_escape(DB) . (support("scheme") ? "&ns=" : "") . (support("single_table") ? "&select=" : "");
+				echo '<a href="' . h($db_link . ($_GET["ns"] == "" ? $section : "")) . '">' . h(DB) . '</a> » '; // with ns, the database link leads to the list of schemas
 			}
 			if (is_array($breadcrumb)) {
 				if ($_GET["ns"] != "") {
-					echo '<a href="' . h(substr(ME, 0, -1)) . '">' . h($_GET["ns"]) . '</a> » ';
+					echo '<a href="' . h(substr(ME, 0, -1) . $section) . '">' . h($_GET["ns"]) . '</a> » ';
 				}
 				foreach ($breadcrumb as $key => $val) {
 					$desc = (is_array($val) ? $val[1] : h($val));
@@ -132,7 +148,7 @@ const shortcutLabels = {
 			echo "$title\n";
 		}
 	}
-	echo "<h2>$title_all</h2>\n";
+	echo "<h2>$title_all$doc</h2>\n";
 	echo "<div id='ajaxstatus' role='status' class='jsonly'></div>\n";
 	restart_session();
 	page_messages($error);
@@ -146,11 +162,19 @@ const shortcutLabels = {
 	// let the browser download the CSS and JS while we are running the queries for the page body
 	ob_flush();
 	flush();
+	if ($not_found) {
+		page_footer($not_found === true ? "" : $not_found);
+		exit;
+	}
 }
 
 /** Print the script maintaining the service worker caching the static files */
 function service_worker(): void {
-	$code = (has_passwords() // the worker belongs to all connections at once, so it is removed only after logging out of the last one; the login form must not register it back
+	$register = has_passwords(); // the worker belongs to all connections at once, so it is removed only after logging out of the last one; the login form must not register it back
+	if (defined('Adminer\DIR')) { // the development version leaves the static files to the web server, it only removes the worker registered by a compiled version at the same URL
+		$register = false;
+	}
+	$code = ($register
 		? "navigator.serviceWorker.register('" . js_escape(preg_replace('~\?.*~', '', ME) . "?file=worker.js&version=" . VERSION) . "', {scope: location.pathname}).catch(() => {});"
 		: "navigator.serviceWorker.getRegistration().then(registration => registration && registration.unregister());
 	caches.keys().then(keys => keys.forEach(key => key.startsWith('adminer-') && caches.delete(key)));"

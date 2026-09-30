@@ -37,31 +37,35 @@ if ($row && !$error) {
 	}
 }
 
+$not_found = false;
+if (!$row) {
+	$checks = driver()->checkConstraints($TABLE);
+	$not_found = ($name != "" && !$checks[$name]);
+	$row = array("name" => ($name != "" ? $name : object_name("CHECK", $TABLE, array())), "clause" => $checks[$name]);
+}
+
 page_header(
 	($name != "" ? lang('Alter check') : lang('Create check')),
 	$error,
 	array("table" => $TABLE),
-	h($name != "" ? $name : $TABLE)
+	h($name != "" ? $name : $TABLE),
+	$not_found,
+	doc_link(array(
+		'sql' => "create-table-check-constraints.html",
+		'mariadb' => "constraint/",
+		'pgsql' => "ddl-constraints.html#DDL-CONSTRAINTS-CHECK-CONSTRAINTS",
+		'cockroach' => "check",
+		'mssql' => "relational-databases/tables/create-check-constraints",
+		'sqlite' => "lang_createtable.html#check_constraints",
+	))
 );
-
-if (!$row) {
-	$checks = driver()->checkConstraints($TABLE);
-	$row = array("name" => $name, "clause" => $checks[$name]);
-}
 ?>
 
 <form action="" method="post">
-<p><?php
+<?php
 if (JUSH != "sqlite") {
-	echo lang('Name') . ': <input name="name" value="' . h($row["name"]) . '" data-maxlength="64" autocapitalize="off"> ';
+	echo '<p>' . lang('Name') . ': <input name="name" value="' . h($row["name"]) . '" data-maxlength="64" autocapitalize="off">';
 }
-echo doc_link(array(
-	'sql' => "create-table-check-constraints.html",
-	'mariadb' => "constraint/",
-	'pgsql' => "ddl-constraints.html#DDL-CONSTRAINTS-CHECK-CONSTRAINTS",
-	'mssql' => "relational-databases/tables/create-check-constraints",
-	'sqlite' => "lang_createtable.html#check_constraints",
-), "?");
 ?>
 <p><?php textarea("clause", $row["clause"]); ?>
 <p><input type='submit' value='<?php echo lang('Save'); ?>'>

@@ -252,7 +252,14 @@ if (is_ajax()) {
 	page_headers();
 	ob_start();
 } else {
-	page_header(lang('Select') . ": $table_name", $error);
+	page_header(
+		lang('Select') . ": $table_name",
+		$error,
+		array(),
+		"",
+		(!$fields && support("table")),
+		($fields ? doc_link(array(JUSH => driver()->tableHelp($TABLE, is_view($table_status)))) : "")
+	);
 }
 
 $set = null;
@@ -274,7 +281,7 @@ if (isset($rights["insert"]) || !support("table")) {
 adminer()->selectLinks($table_status, $set);
 
 if (!$columns && support("table")) {
-	echo "<p class='error'>" . lang('Unable to select the table') . ($fields ? "." : ": " . adminer()->error()) . "\n";
+	echo "<p class='error'>" . lang('Unable to select the table.') . "\n";
 } else {
 	echo "<form action='' id='form'>\n";
 	echo "<div hidden>";
@@ -378,42 +385,46 @@ if (!$columns && support("table")) {
 		} else {
 			$backward_keys = adminer()->backwardKeys($TABLE, $table_name);
 
+			$result_columns = array(); // result column key => ["fun" => applied function, "col" => column the function is applied to]
+			reset($select);
+			foreach ($rows[0] as $key => $val) {
+				if (!isset($unselected[$key])) {
+					/** @var array{fun?:string, col?:string} */
+					$val = idx($_GET["columns"], key($select)) ?: array();
+					// $select is empty for SELECT * - the result column key is the column name
+					$result_columns[$key] = array("fun" => $val["fun"], "col" => ($select ? $val["col"] : $key));
+					next($select);
+				}
+			}
+
 			echo "<div class='scrollable'>";
 			echo "<table id='table' class='nowrap checkable odds'"
 				. on('click', 'tableClick') . on('dblclick', 'tableClick') . on('keydown', 'editingKeydown') . ">\n";
 			echo "<thead><tr>" . (!$group && $select
 				? ""
-				: "<td class='hover check'><input type='checkbox' id='all-page' class='jsonly' title='" . lang('All rows on this page') . "'" . on('click', 'formCheck', '^check') . ">");
+				: "<td class='hover check sticky'><input type='checkbox' id='all-page' class='jsonly' title='" . lang('All rows on this page') . "'" . on('click', 'formCheck', '^check') . ">");
 			$names = array();
-			$functions = array();
-			reset($select);
 			$rank = 1;
-			foreach ($rows[0] as $key => $val) {
-				if (!isset($unselected[$key])) {
-					/** @var array{fun?:string, col?:string} */
-					$val = idx($_GET["columns"], key($select)) ?: array();
-					$field = $fields[$select ? ($val ? $val["col"] : current($select)) : $key];
-					$name = ($field ? adminer()->fieldName($field, $rank) : ($val["fun"] ? "*" : h($key)));
-					if ($name != "") {
-						$rank++;
-						$names[$key] = $name;
-						$column = idf_escape($key);
-						$href = remove_from_uri('(order|desc)[^=]*|page|next') . '&order[0]=' . url_escape($key); // next - the cursor is bound to the previous order
-						$desc = "&desc[0]=1";
-						$sort_column = preg_replace('~ DESC( NULLS LAST)?$~', '', $order[0]);
-						$sorted = ($sort_column == $column || $sort_column == $key); // $sort_column == $key - COUNT(*)
-						echo "<th id='th[" . h(bracket_escape($key)) . "]'" . ($sorted ? " aria-sort='" . ($sort_column == $order[0] ? "ascending" : "descending") . "'" : "") . ">";
-						$fun = apply_sql_function($val["fun"], $name); //! columns looking like functions
-						$sortable = isset($field["privileges"]["order"]) || $fun != $name;
-						echo ($sortable ? "<a href='" . h($href . ($sorted && $sort_column == $order[0] ? $desc : '')) . "'>$fun</a>" : $fun);
-						$menu = ($sortable ? "<a href='" . h($href . $desc) . "' title='" . lang('descending') . "' class='text'> ↓</a>" : '');
-						if (!$val["fun"] && isset($field["privileges"]["where"])) {
-							$menu .= "<a href='#fieldset-search' title='" . lang('Search') . "' class='text jsonly'" . on('click', 'selectSearch', $key) . "> =</a>";
-						}
-						echo ($menu ? "<span class='column'>$menu</span>" : "");
+			foreach ($result_columns as $key => $val) {
+				$field = $fields[$val["col"]];
+				$name = ($field ? adminer()->fieldName($field, $rank) : ($val["fun"] ? "*" : h($key)));
+				if ($name != "") {
+					$rank++;
+					$names[$key] = $name;
+					$column = idf_escape($key);
+					$href = remove_from_uri('(order|desc)[^=]*|page|next') . '&order[0]=' . url_escape($key); // next - the cursor is bound to the previous order
+					$desc = "&desc[0]=1";
+					$sort_column = preg_replace('~ DESC( NULLS LAST)?$~', '', $order[0]);
+					$sorted = ($sort_column == $column || $sort_column == $key); // $sort_column == $key - COUNT(*)
+					echo "<th id='th[" . h(bracket_escape($key)) . "]'" . ($sorted ? " aria-sort='" . ($sort_column == $order[0] ? "ascending" : "descending") . "'" : "") . ">";
+					$fun = apply_sql_function(h($val["fun"]), $name);
+					$sortable = isset($field["privileges"]["order"]) || $val["fun"];
+					echo ($sortable ? "<a href='" . h($href . ($sorted && $sort_column == $order[0] ? $desc : '')) . "'>$fun</a>" : $fun);
+					$menu = ($sortable ? "<a href='" . h($href . $desc) . "' title='" . lang('descending') . "' class='text'> ↓</a>" : '');
+					if (!$val["fun"] && isset($field["privileges"]["where"])) {
+						$menu .= "<a href='#fieldset-search' title='" . lang('Search') . "' class='text jsonly'" . on('click', 'selectSearch', $key) . "> =</a>";
 					}
-					$functions[$key] = $val["fun"];
-					next($select);
+					echo ($menu ? "<span class='column'>$menu</span>" : "");
 				}
 			}
 
@@ -421,7 +432,42 @@ if (!$columns && support("table")) {
 			if ($_GET["modify"]) {
 				foreach ($rows as $row) {
 					foreach ($row as $key => $val) {
-						$lengths[$key] = max($lengths[$key], min(40, strlen(utf8_decode($val))));
+						$lengths[$key] = max($lengths[$key], min(40, utf8_length((string) $val)));
+					}
+				}
+			}
+
+			$highlights = array(); // column => regular expressions matching the searched values
+			$highlight_nulls = array(); // column => true
+			foreach ((array) $_GET["where"] as $val) {
+				$val += array("col" => "", "op" => "", "val" => "");
+				$col = $val["col"];
+				$search = $val["val"];
+				if (
+					!is_array($search) // $search is an array in Editor for enum
+					&& ($search != "" || preg_match('~NULL$~', $val["op"]))
+					&& (!$val["op"] || in_array($val["op"], adminer()->operators($table_status)))
+				) {
+					$like = strtr(preg_quote($search), array("%" => ".*?", "_" => "."));
+					$patterns = array("LIKE %%" => $like, "ILIKE %%" => $like, "REGEXP" => $search)
+						+ (JUSH == "pgsql" ? array("~" => $search, "~*" => $search) : array()) // ~ in IGDB is not a regular expression
+						+ ($col != "" ? array() : array( // the other operators would highlight the whole column
+							"=" => '^' . preg_quote($search) . '\z',
+							"IN" => '^(?:' . implode("|", array_map('preg_quote', array_map('trim', explode(",", $search)))) . ')\z',
+							"LIKE" => "^$like\\z",
+							"ILIKE" => "^$like\\z",
+							"FIND_IN_SET" => '(?<=^|,)' . preg_quote($search) . '(?=,|\z)',
+						));
+					foreach (($col != "" ? array($col => $fields[$col]) : $fields) as $name => $field) {
+						if ($col != "" || is_searchable($field, $val)) {
+							$op = $val["op"] ?: (!preg_match('~' . text_type() . '~', $field["type"]) ? "IN" : (preg_match('~%~', $search) ? "LIKE" : "LIKE %%")); // Editor
+							if (isset($patterns[$op])) {
+								$ci = preg_match('~^ILIKE|\*$~', $op) || ($op != "~" && preg_match('~^(sql|mssql|sqlite)$~', JUSH)); // ~* is case-insensitive in PostgreSQL
+								$highlights[$name][] = "(?" . ($ci ? "i" : "") . ":$patterns[$op])";
+							} elseif ($op == "IS NULL" && $col == "") {
+								$highlight_nulls[$name] = true;
+							}
+						}
 					}
 				}
 			}
@@ -436,34 +482,45 @@ if (!$columns && support("table")) {
 				$unique_array = unique_array($rows[$n], $indexes);
 				if (!$unique_array) {
 					$unique_array = array();
-					reset($select);
 					foreach ($rows[$n] as $key => $val) {
-						if (!preg_match('~^(COUNT|AVG|GROUP_CONCAT|MAX|MIN|SUM)\(~', current($select))) {
+						// the columns added to identify the row are not in $result_columns, they never have a function
+						if (!in_array(idx(idx($result_columns, $key, array()), "fun"), driver()->grouping)) {
 							$unique_array[$key] = $val;
 						}
-						next($select);
 					}
 				}
 				$unique_idf = "";
+				$i = 0;
 				foreach ($unique_array as $key => $val) {
-					$field = (array) $fields[$key];
+					$result_column = idx($result_columns, $key, array()); // the columns added to identify the row are not selected
+					$fun = idx($result_column, "fun", "");
+					$col = ($fun ? $result_column["col"] : $key);
+					$field = (array) $fields[$col];
 					$is_binary = is_blob($field); // binary and varbinary are converted to hexadecimal so they are not shortened
-					if ((JUSH == "sql" || JUSH == "pgsql") && ($is_binary || preg_match('~' . text_type() . '~', $field["type"])) && strlen($val) > 64) {
-						$key = (strpos($key, '(') ? $key : idf_escape($key)); //! columns looking like functions
-						$key = "MD5(" . ($is_binary || JUSH != 'sql' || preg_match("~^utf8~", $field["collation"]) ? $key : "CONVERT($key USING " . charset(connection()) . ")") . ")";
+					if (!$fun && strlen($val) > 64 && driver()->md5(idf_escape($col), $field)) {
+						$fun = "md5"; // the value is too long for the URL
 						$val = md5($is_binary ? (string) driver()->value($val, $field) : $val); // value() decodes bytea in PostgreSQL
 					}
-					$unique_idf .= "&" . ($val !== null ? "where[" . url_escape(bracket_escape($key)) . "]=" . url_escape($val === false ? "f" : $val) : "null[]=" . url_escape($key));
+					if ($fun) {
+						// indexed, the same column can be selected with two functions; the value is omitted if it is NULL
+						$unique_idf .= "&fun[$i]=" . url_escape($fun) . "&col[$i]=" . url_escape($col) . ($val !== null ? "&val[$i]=" . url_escape($val === false ? "f" : $val) : "");
+						$i++;
+					} else {
+						$unique_idf .= "&" . ($val !== null
+							? "where[" . url_escape(bracket_escape($col)) . "]=" . url_escape($val === false ? "f" : $val)
+							: "null[]=" . url_escape($col)
+						);
+					}
 				}
-				echo "<tr>" . (!$group && $select ? "" : "<td class='hover check'>"
+				echo "<tr>" . (!$group && $select ? "" : "<td class='hover check sticky'>"
 					. ($is_group || information_schema(DB) ? "" : "<a href='" . h(ME . "edit=" . url_escape($TABLE) . $unique_idf) . "' class='edit'>" . lang('edit') . "</a> ")
 					. checkbox("check[]", substr($unique_idf, 1), in_array(substr($unique_idf, 1), (array) $_POST["check"]))
 				);
 
-				reset($select);
 				foreach ($row as $key => $val) {
 					if (isset($names[$key])) {
-						$column = current($select);
+						$fun = $result_columns[$key]["fun"];
+						$col = $result_columns[$key]["col"];
 						$field = (array) $fields[$key];
 						if ($val != "" && (!isset($email_fields[$key]) || $email_fields[$key] != "")) {
 							$email_fields[$key] = (is_mail($val) ? $names[$key] : ""); //! filled e-mails can be contained on other pages
@@ -481,10 +538,10 @@ if (!$columns && support("table")) {
 										$link .= where_link($i, $foreign_key["target"][$i], $rows[$n][$source]);
 									}
 									// InnoDB supports non-UNIQUE keys
-									$link = ($foreign_key["db"] != "" ? preg_replace('~([?&]db=)[^&]+~', '\1' . url_escape($foreign_key["db"]), ME) : ME)
+									$link = ($foreign_key["db"] != "" ? preg_replace('~&db=[^&]*~', "&db=" . url_escape($foreign_key["db"]), ME) : ME)
 										. 'select=' . url_escape($foreign_key["table"]) . $link;
-									if ($foreign_key["ns"]) {
-										$link = preg_replace('~([?&]ns=)[^&]+~', '\1' . url_escape($foreign_key["ns"]), $link);
+									if ($foreign_key["ns"] != "") {
+										$link = preg_replace('~&ns=[^&]*~', "&ns=" . url_escape($foreign_key["ns"]), $link);
 									}
 									if (count($foreign_key["source"]) == 1) {
 										break;
@@ -492,7 +549,7 @@ if (!$columns && support("table")) {
 								}
 							}
 						}
-						if ($column == "COUNT(*)") {
+						if ($fun == "count" && $col == "") { // COUNT(*)
 							$link = ME . "select=" . url_escape($TABLE);
 							$i = 0;
 							foreach ((array) $_GET["where"] as $v) {
@@ -501,37 +558,50 @@ if (!$columns && support("table")) {
 								}
 							}
 							foreach ($unique_array as $k => $v) {
+								if (idx(idx($result_columns, $k, array()), "fun")) {
+									$link = ""; // a search condition can't apply a function so the rows of the group can't be found
+									break;
+								}
 								$link .= where_link($i++, $k, $v);
 							}
 						}
 
-						$html = select_value($val, $link, $field, $text_length);
+						$html = select_value($val, $link, $field, $text_length, ($fun ? array() : idx($highlights, $key, array())));
+						if ($val === null && !$fun && isset($highlight_nulls[$key])) {
+							$html = "<mark>$html</mark>";
+						}
 						// PHP decodes the parameter name once and then parses the brackets, the identifier must not contain any
 						$idf = bracket_escape($unique_idf);
 						$id = h("val[$idf][" . bracket_escape($key) . "]");
 						$posted = idx(idx($_POST["val"], $idf), bracket_escape($key));
-						$update = idx($field["privileges"], "update");
-						$editable = !is_array($row[$key]) && !is_blob($field) && is_utf8($val) && $rows[$n][$key] == $val && !$functions[$key] && !$field["generated"] && $update;
-						$type = (preg_match('~^(AVG|MIN|MAX)\((.+)\)~', $column, $match) ? $fields[idf_unescape($match[2])]["type"] : $field["type"]);
+						$update = idx($field["privileges"], "update") && !is_identity_always($field);
+						$edit_val = $rows[$n][$key]; // $val can be replaced by rowDescriptions()
+						$editable = !is_array($row[$key]) && !is_blob($field) && is_utf8($edit_val) && !$fun && !$field["generated"] && $update;
+						$type = ($fun == "min" || $fun == "max" ? $fields[$col]["type"] : $field["type"]);
 						$text = preg_match('~text|json|lob~', $type);
-						$is_number = preg_match(number_type(), $type) || preg_match('~^(CHAR_LENGTH|ROUND|FLOOR|CEIL|TIME_TO_SEC|COUNT|SUM)\(~', $column);
+						$is_number = preg_match(number_type(), $type) || preg_match('~^(avg|ceil|char_length|count|count distinct|floor|len|length|round|sum|time_to_sec)$~', $fun);
 						echo "<td id='$id'" . ($is_number && ($val === null || is_numeric(strip_tags($html)) || $type == "money") ? " class='number'" : "");
-						if (($_GET["modify"] && $editable && $val !== null) || $posted !== null) {
-							$h_value = h($posted !== null ? $posted : $val);
+						if (($_GET["modify"] && $editable && $edit_val !== null) || $posted !== null) {
+							$h_value = h($posted !== null ? $posted : $edit_val);
 							echo ">" . ($text
-								? "<textarea name='$id' cols='30' rows='" . (substr_count($val, "\n") + 1) . "'>$h_value</textarea>"
+								? "<textarea name='$id' cols='30' rows='" . (substr_count($edit_val, "\n") + 1) . "'>$h_value</textarea>"
 								: "<input name='$id' value='$h_value' size='$lengths[$key]'>"
 							);
 						} else {
 							$long = strpos($html, "<i>…</i>");
+							$edit_text = adminer()->editVal($edit_val, $field); // processInput() converts it back
 							echo ($update
 								? " data-text='" . ($long ? 2 : ($text ? 1 : 0)) . "'"
 									. ($editable ? "" : " data-warning='" . lang('Use the edit link to modify this value.') . "'")
+									// the displayed text differs from the value if it is NULL, a description or if a plugin changes it in selectVal(), long text is loaded by AJAX
+									. ($editable && !$long && html_entity_decode(strip_tags($html), ENT_QUOTES, "UTF-8") !== $edit_text
+										? " data-value='" . h($edit_text) . "'"
+										: ""
+									)
 								: ""
 							) . ">$html";
 						}
 					}
-					next($select);
 				}
 
 				if ($backward_keys) {
@@ -557,12 +627,12 @@ if (!$columns && support("table")) {
 					if (!$limit || (count($rows) < $limit && ($rows || !$page))) {
 						$found_rows = ($page ? $page * $limit : 0) + count($rows);
 					} elseif (JUSH != "sql" || !$is_group) {
-						$found_rows = ($is_group ? false : found_rows($table_status, $where));
-						if (intval($found_rows) < max(1e4, 2 * ($page + 1) * $limit)) {
+						$found_rows = ($is_group ? null : found_rows($table_status, $where));
+						$exact_count = !driver()->hasEstimatedRows();
+						if ($found_rows === null || (!$exact_count && $found_rows < max(1e4, 2 * ($page + 1) * $limit))) {
 							// slow with big tables
 							$found_rows = first(slow_query(count_rows($TABLE, $where, $is_group, $group)));
-						} elseif (JUSH == 'sql' || JUSH == 'pgsql') {
-							$exact_count = false;
+							$exact_count = true;
 						}
 					}
 				}
@@ -621,7 +691,7 @@ if (!$columns && support("table")) {
 					?>
 <fieldset<?php echo ($_GET["modify"] ? '' : " title='" . lang('Ctrl+click on a value to modify it.') . "'"); ?>>
 <legend><a href='<?php echo h($_GET["modify"] ? remove_from_uri("modify") : relative_uri() . "&modify=1"); ?>'><?php echo lang('Modify'); ?></a></legend><div>
-<input type='submit' id='save' value='<?php echo lang('Save'); ?>'<?php echo ($_GET["modify"] ? '' : " class='jsonly' disabled"); ?>>
+<input type='submit' id='save' value='<?php echo lang('Save'); ?>'<?php echo ($_GET["modify"] || $_POST["val"] ? '' : " class='jsonly' disabled"); ?>>
 </div></fieldset>
 
 <fieldset><legend><?php echo lang('Selected'); ?> <span id="selected"></span></legend><div>

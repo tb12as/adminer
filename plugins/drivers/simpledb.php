@@ -103,7 +103,7 @@ if (isset($_GET["simpledb"])) {
 
 			function fetch_field(): \stdClass {
 				$keys = array_keys($this->rows[0]);
-				return (object) array('name' => $keys[$this->offset++], 'type' => 15, 'charsetnr' => 0);
+				return (object) array('name' => $keys[$this->offset++]);
 			}
 		}
 	}
@@ -134,6 +134,10 @@ if (isset($_GET["simpledb"])) {
 			return ""; // the queries are only a select expression and the columns are not known
 		}
 
+		function hasEstimatedRows(): bool {
+			return true; // DomainMetadata returns ItemCount with the time when it was calculated
+		}
+
 		private function chunkRequest(array $ids, string $action, array $params, array $expand = array()): bool {
 			foreach (array_chunk($ids, 25) as $chunk) {
 				$params2 = $params;
@@ -147,7 +151,7 @@ if (isset($_GET["simpledb"])) {
 					return false;
 				}
 			}
-			connection()->affected_rows = count($ids);
+			$this->conn->affected_rows = count($ids);
 			return true;
 		}
 
@@ -164,10 +168,10 @@ if (isset($_GET["simpledb"])) {
 		}
 
 		function select(string $table, array $select, array $where, array $group, array $order = array(), int $limit = 1, ?int $page = 0, bool $print = false) {
-			connection()->next = $_GET["next"];
+			$this->conn->next = $_GET["next"];
 			$_GET["next"] = ""; // set by sdb_request_all() if there is a following page
 			$return = parent::select($table, $select, $where, $group, $order, $limit, $page, $print);
-			connection()->next = 0;
+			$this->conn->next = 0;
 			return $return;
 		}
 
@@ -320,7 +324,8 @@ if (isset($_GET["simpledb"])) {
 		return h(connection()->error);
 	}
 
-	function information_schema(string $db) {
+	function information_schema(string $db): bool {
+		return false;
 	}
 
 	function indexes(string $table, ?Db $connection2 = null): array {

@@ -8,85 +8,121 @@ namespace Adminer;
 * @param string[] $orgtables
 * @param int|numeric-string $limit
 * @param-out int $limit the number of printed rows
+* @param bool $edit allow modifying the values by Ctrl+click, the caller must print the result inside a form
+* @param-out bool $edit whether at least one value can be modified
 * @return string[] $orgtables
 */
-function print_select_result($result, ?Db $connection2 = null, array $orgtables = array(), &$limit = 0): array {
-	$links = array(); // colno => orgtable - create links from these columns
-	$indexes = array(); // orgtable => array(column => colno) - primary keys
-	$columns = array(); // orgtable => array(column => ) - not selected columns in primary key
-	$blobs = array(); // colno => bool - display bytes for blobs
-	$types = array(); // colno => type - display char in <code>
+function print_select_result($result, ?Db $connection2 = null, array $orgtables = array(), &$limit = 0, &$edit = false): array {
+	// the same table can be joined more than once so everything is keyed by the alias, not by the original table
+	$links = array(); // colno => alias - create links from these columns
+	$indexes = array(); // alias => array(column => colno) - primary keys
+	$columns = array(); // alias => array(column => ) - not selected columns in primary key
+	$tables = array(); // alias => orgtable
+	$primary = array(); // orgtable => array(column => ) - primary key of each table, the aliases share it
+	$editable = array(); // colno => array(alias, orgname, is_text) - columns which can be modified
+	$types = array(); // colno => type name - used to display the value
 	$return = array(); // table => orgtable - mapping to use in EXPLAIN
+	$modify = $edit; // $edit is used also for the output value
+	$edit = false;
 	for ($i=0; (!$limit || $i < $limit) && ($row = $result->fetch_row()); $i++) {
 		if (!$i) {
 			echo "<div class='scrollable'>\n";
-			echo "<table class='nowrap odds'>\n";
+			echo "<table class='nowrap odds'" . ($modify
+				? on('click', 'tableClick') . on('dblclick', 'tableClick') . on('keydown', 'editingKeydown')
+				: ""
+			) . ">\n";
 			echo "<thead><tr>";
 			for ($j=0; $j < count($row); $j++) {
 				$field = $result->fetch_field();
 				$name = $field->name;
+				$table = (isset($field->table) ? $field->table : "");
 				$orgtable = (isset($field->orgtable) ? $field->orgtable : "");
 				$orgname = (isset($field->orgname) ? $field->orgname : $name);
+				$type_name = driver()->typeName($field);
 				if ($orgtables && JUSH == "sql") { // MySQL EXPLAIN
 					$links[$j] = ($name == "table" ? "table=" : ($name == "possible_keys" ? "indexes=" : null));
 				} elseif ($orgtable != "") {
-					if (isset($field->table)) {
-						$return[$field->table] = $orgtable;
+					$alias = ($table != "" ? $table : $orgtable); // the drivers not reporting the alias can't tell the aliases apart
+					if ($table != "") {
+						$return[$table] = $orgtable;
 					}
-					if (!isset($indexes[$orgtable])) {
-						// find primary key in each table
-						$indexes[$orgtable] = array();
-						foreach (indexes($orgtable, $connection2) as $index) {
-							if ($index["type"] == "PRIMARY") {
-								$indexes[$orgtable] = array_flip($index["columns"]);
-								break;
+					if (!isset($indexes[$alias])) {
+						if (!isset($primary[$orgtable])) {
+							// find primary key in each table
+							$primary[$orgtable] = array();
+							foreach (indexes($orgtable, $connection2) as $index) {
+								if ($index["type"] == "PRIMARY") {
+									$primary[$orgtable] = array_flip($index["columns"]);
+									break;
+								}
 							}
 						}
-						$columns[$orgtable] = $indexes[$orgtable];
+						$tables[$alias] = $orgtable;
+						$indexes[$alias] = $primary[$orgtable];
+						$columns[$alias] = $primary[$orgtable];
 					}
-					if (isset($columns[$orgtable][$orgname])) {
-						unset($columns[$orgtable][$orgname]);
-						$indexes[$orgtable][$orgname] = $j;
-						$links[$j] = $orgtable;
+					if (isset($columns[$alias][$orgname])) {
+						unset($columns[$alias][$orgname]);
+						$indexes[$alias][$orgname] = $j;
+						$links[$j] = $alias;
+					} elseif ($modify && isset($field->orgname) && $field->db == DB && !is_blob(array("type" => $type_name))) {
+						// the value can be identified only by the drivers reporting the original names, in practice only MySQLi
+						$editable[$j] = array($alias, $orgname, preg_match('~text|json|lob~', $type_name));
 					}
 				}
-				if ($field->charsetnr == 63) { // 63 - binary
-					$blobs[$j] = true;
-				}
-				$types[$j] = $field->type;
-				echo "<th title='" . h(trim(($orgtable != "" ? "$orgtable.$orgname" : ($field->name != $orgname ? $orgname : "")) . " " . driver()->typeName($field))) . "'>" . h($name)
+				$types[$j] = $type_name;
+				echo "<th title='" . h(trim(($orgtable != "" ? "$orgtable.$orgname" : ($field->name != $orgname ? $orgname : "")) . " " . $type_name)) . "'>" . h($name)
 					. ($orgtables ? doc_link(array(
 						'sql' => "explain-output.html#explain_" . strtolower($name),
 						'mariadb' => "explain/#the-columns-in-explain-select",
 					)) : "")
 				;
 			}
+			foreach ($editable as $j => $cell) {
+				if ($columns[$cell[0]]) { // the row is identifiable only if the whole primary key is selected
+					unset($editable[$j]);
+				}
+			}
 			echo "<tbody>\n";
+		}
+		$idfs = array(); // alias => identifier of the row in it, null if a key column is NULL
+		foreach ($indexes as $alias => $index) {
+			if ($index && !$columns[$alias]) {
+				$idf = "";
+				foreach ($index as $col => $j) {
+					if ($row[$j] === null) { // NULL is ambiguous
+						$idf = null;
+						break;
+					}
+					$idf .= "&where[" . url_escape(bracket_escape($col)) . "]=" . url_escape($row[$j]);
+				}
+				$idfs[$alias] = $idf;
+			}
 		}
 		echo "<tr>";
 		foreach ($row as $key => $val) {
 			$link = "";
-			if (isset($links[$key]) && !$columns[$links[$key]]) {
+			if (isset($links[$key])) {
 				if ($orgtables && JUSH == "sql") { // MySQL EXPLAIN
 					$table = $row[array_search("table=", $links)];
 					$link = ME . $links[$key] . url_escape($orgtables[$table] != "" ? $orgtables[$table] : $table);
-				} else {
-					$link = ME . "edit=" . url_escape($links[$key]);
-					foreach ($indexes[$links[$key]] as $col => $j) {
-						if ($row[$j] === null) {
-							$link = "";
-							break;
-						}
-						$link .= "&where[" . url_escape(bracket_escape($col)) . "]=" . url_escape($row[$j]);
-					}
+				} elseif (idx($idfs, $links[$key]) !== null) {
+					$link = ME . "edit=" . url_escape($tables[$links[$key]]) . $idfs[$links[$key]];
 				}
 			}
-			$field = array(
-				'type' => ($blobs[$key] ? 'blob' : ($types[$key] == 254 ? 'char' : '')),
-			);
-			$val = select_value($val, $link, $field, null);
-			// https://dev.mysql.com/doc/dev/mysql-server/latest/field__types_8h.html
-			echo "<td" . ($types[$key] <= 9 || $types[$key] == 246 ? " class='number'" : "") . ">$val";
+			// the binary values are not converted to hexadecimal as in select
+			$html = select_value($val, $link, array('type' => (preg_match('~binary~', $types[$key]) ? 'blob' : $types[$key])), null);
+			$attrs = "";
+			$cell = idx($editable, $key);
+			if ($cell && idx($idfs, $cell[0]) !== null && is_utf8($val)) {
+				$edit = true;
+				// the same value can be displayed in more rows so it is identified by an attribute instead of by an ID
+				$attrs = " data-name='" . h("val[" . bracket_escape($tables[$cell[0]]) . "][" . bracket_escape(substr($idfs[$cell[0]], 1)) . "][" . bracket_escape($cell[1]) . "]")
+					. "' data-text='" . ($cell[2] ? 1 : 0) . "'"
+					. (html_entity_decode(strip_tags($html), ENT_QUOTES, "UTF-8") !== $val ? " data-value='" . h($val) . "'" : "") // NULL or a text changed by a plugin in selectVal()
+				;
+			}
+			echo "<td" . (preg_match(number_type(), $types[$key]) ? " class='number'" : "") . "$attrs>$html";
 		}
 	}
 	$limit = $i;
@@ -204,6 +240,9 @@ function option_types(string $type, string $types): string {
 
 /** Filter length value including enums */
 function process_length(?string $length): string {
+	if (JUSH == "mssql" && preg_match('~^\s*\(?\s*max\s*\)?\s*$~i', $length)) {
+		return "(max)"; // the maximum length of varchar, nvarchar and varbinary
+	}
 	$enum_length = driver()->enumLength;
 	return (preg_match("~^\\s*\\(?\\s*$enum_length(?:\\s*,\\s*$enum_length)*+\\s*\\)?\\s*\$~", $length) && preg_match_all("~$enum_length~", $length, $matches)
 		? "(" . implode(",", $matches[0]) . ")"
@@ -215,23 +254,36 @@ function process_length(?string $length): string {
 * @return string SQL expression in parentheses
 */
 function process_in(string $val): string {
-	$enum_length = driver()->enumLength;
-	if (preg_match("~^\\s*\\(?\\s*$enum_length(?:\\s*,\\s*$enum_length)*+\\s*\\)?\\s*\$~", $val) && preg_match_all("~$enum_length~", $val, $matches)) {
-		return "(" . implode(", ", $matches[0]) . ")";
-	}
-	$return = array();
-	foreach (explode(",", $val) as $item) {
-		// the values are quoted also if they are numbers, an unquoted number can't be compared with a text column
-		$return[] = q(trim($item));
-	}
-	return "(" . implode(", ", $return) . ")";
+	$val = preg_replace('~^\s*\(\s*(.*?)\s*\)\s*$~s', '\1', $val); // the parentheses are optional
+	// quoted values can contain a comma; they are unquoted and quoted again because backslash escapes a quote only in some databases
+	$quoted = "'((?:[^']|'')*+)'";
+	$items = (preg_match("~^\\s*$quoted(?:\\s*,\\s*$quoted)*+\\s*\$~", $val) && preg_match_all("~$quoted~", $val, $matches)
+		? str_replace("''", "'", $matches[1])
+		: array_map('trim', explode(",", $val))
+	);
+	// the values are quoted also if they are numbers, an unquoted number can't be compared with a text column
+	return "(" . implode(", ", array_map('Adminer\q', $items)) . ")";
+}
+
+/** Create the range of the BETWEEN operator in select
+* @return string SQL expression "min AND max", "NULL AND NULL" matching nothing if $val isn't two values separated by AND
+*/
+function process_between(string $val): string {
+	// quoted values can contain AND; they are unquoted and quoted again because backslash escapes a quote only in some databases
+	$quoted = "'((?:[^']|'')*+)'";
+	$range = (preg_match("~^\\s*$quoted\\s+AND\\s+$quoted\\s*\$~i", $val, $match)
+		? array(str_replace("''", "'", $match[1]), str_replace("''", "'", $match[2]))
+		: preg_split('~\s+AND\s+~i', trim($val))
+	);
+	// the values are quoted also if they are numbers, an unquoted number can't be compared with a text column
+	return (count($range) == 2 ? q($range[0]) . " AND " . q($range[1]) : "NULL AND NULL");
 }
 
 /** Create SQL string from field type
 * @param FieldType $field
 */
 function process_type(array $field, string $collate = "COLLATE"): string {
-	return " $field[type]"
+	return " " . (is_user_type($field["type"]) ? idf_escape($field["type"]) : $field["type"])
 		. process_length($field["length"])
 		. (preg_match(number_type(), $field["type"]) && in_array($field["unsigned"], driver()->unsigned) ? " $field[unsigned]" : "")
 		. (preg_match('~' . text_type() . '~', $field["type"]) && $field["collation"] ? " $collate " . (JUSH == "mssql" ? $field["collation"] : q($field["collation"])) : "")
@@ -268,11 +320,13 @@ function default_value(array $field): string {
 	}
 	$default = str_replace("\r", "", $field["default"]);
 	$generated = $field["generated"];
+	$string = !preg_match('~]$~', $field["length"]) // a PostgreSQL array literal is quoted by starting with {, ARRAY[] is an expression
+		&& (preg_match('~char|binary|text|json|enum|set|String~', $field["type"]) || driver()->enumLength($field)); // String - ClickHouse
 	return (in_array($generated, driver()->generated)
 		? (JUSH == "mssql" ? " AS ($default)" . ($generated == "VIRTUAL" ? "" : " $generated") : " GENERATED ALWAYS AS ($default) $generated")
 		: (preg_match('~^GENERATED ~i', $default)
 			? " $default"
-			: " DEFAULT " . (preg_match('~char|binary|text|json|enum|set|String~', $field["type"]) || preg_match('~^(?![a-z])~i', $default) // String - ClickHouse
+			: " DEFAULT " . ($string || preg_match('~^(?![a-z])~i', $default)
 				? (JUSH == "sql" && preg_match('~text|json~', $field["type"]) ? "(" . q($default) . ")" : q($default)) // MySQL requires () around default value of text column
 				: str_ireplace("current_timestamp()", "CURRENT_TIMESTAMP", (JUSH == "sqlite" ? "($default)" : $default))
 			)
@@ -293,21 +347,22 @@ function edit_fields(array $fields, array $collations, $type = "TABLE", array $f
 	echo "<thead><tr>\n";
 	echo ($type == "PROCEDURE" ? "<td>" : "");
 	echo "<th id='label-name'>" . ($type == "TABLE" ? lang('Column name') : lang('Parameter name'));
-	echo "<td id='label-type'>" . lang('Type') . "<textarea id='enum-edit' rows='4' cols='12' wrap='off' hidden></textarea>" . script("qs('#enum-edit').onblur = editingLengthBlur;");
-	echo "<td id='label-length'>" . lang('Length');
-	echo "<td>" . lang('Options'); // no label required, options have their own label
+	echo "<th id='label-type'>" . lang('Type') . "<textarea id='enum-edit' rows='4' cols='12' wrap='off' hidden></textarea>" . script("qs('#enum-edit').onblur = editingLengthBlur;");
+	echo "<th id='label-length'>" . lang('Length');
+	echo "<th>" . lang('Options'); // no label required, options have their own label
 	if ($type == "TABLE") {
-		echo "<td id='label-null'>NULL\n";
-		echo "<td><input type='radio' name='auto_increment_col' value=''><abbr id='label-ai' title='" . lang('Auto Increment') . "'>AI</abbr>";
+		echo "<th id='label-null'>NULL\n";
+		echo "<th><input type='radio' name='auto_increment_col' value=''><abbr id='label-ai' title='" . lang('Auto Increment') . "'>AI</abbr>";
 		echo doc_link(array(
 			'sql' => "example-auto-increment.html",
 			'mariadb' => "auto_increment/",
 			'sqlite' => "autoinc.html",
 			'pgsql' => "datatype-numeric.html#DATATYPE-SERIAL",
+			'cockroach' => "serial",
 			'mssql' => "t-sql/statements/create-table-transact-sql-identity-property",
 		));
-		echo "<td id='label-default'$default_class>" . lang('Default value');
-		echo (support("comment") ? "<td id='label-comment'$comment_class>" . lang('Comment') : "");
+		echo "<th id='label-default'$default_class>" . lang('Default value');
+		echo (support("comment") ? "<th id='label-comment'$comment_class>" . lang('Comment') : "");
 	}
 	$last_col = !support("move_col"); // the column can be added only to the end
 	echo "<td>" . icon("plus", "add[" . ($last_col ? count($fields) : 0) . "]", "+", lang('Add next'), ($last_col ? on('click', 'editingAddLastRow') : ""));
@@ -411,7 +466,7 @@ function create_trigger(string $on, array $row): string {
 	return "CREATE TRIGGER "
 		. idf_escape($row["Trigger"])
 		. (JUSH == "mssql" ? $on . $timing_event : $timing_event . $on)
-		. rtrim(" $row[Type]\n$row[Statement]", ";")
+		. preg_replace('~[\s;]+$~', '', " $row[Type]\n$row[Statement]")
 		. ";"
 	;
 }
@@ -446,20 +501,22 @@ function routine_collate(?string $collation): string {
 */
 function create_routine($routine, array $row): string {
 	$set = array();
-	$fields = (array) $row["fields"];
+	$fields = $row["fields"];
 	ksort($fields); // enforce fields order
 	foreach ($fields as $field) {
 		if ($field["field"] != "") {
-			$set[] = "\n  " . (preg_match("~^(" . driver()->inout . ")\$~", $field["inout"]) ? "$field[inout] " : "")
-				. idf_escape($field["field"])
-				. process_type($field, routine_collate($field["collation"]))
-			;
+			$inout = (preg_match("~^(" . driver()->inout . ")\$~", $field["inout"]) ? $field["inout"] : "");
+			// T-SQL prefixes the parameters by @ which can't be escaped (SQL injection), it puts OUTPUT after the type and accepts no COLLATE
+			$set[] = "\n  " . (JUSH == "mssql"
+				? "@$field[field]" . process_type($field) . ($inout ? " $inout" : "")
+				: ($inout ? "$inout " : "") . idf_escape($field["field"]) . process_type($field, routine_collate($field["collation"]))
+			);
 		}
 	}
 	$definer = "";
 	$options = array();
 	foreach (routine_options($routine) as $key => $values) {
-		$value = idx((array) $row["options"], $key, "");
+		$value = idx($row["options"], $key, "");
 		if ($key == "DEFINER") { // DEFINER precedes the routine type, it is not a characteristic
 			$definer = ($value ? " $key=" . implode("@", array_map('Adminer\q', explode("@", $value, 2))) : "");
 		} elseif (!$values) {
@@ -471,30 +528,42 @@ function create_routine($routine, array $row): string {
 		}
 	}
 	$language = $row["language"];
-	$definition = rtrim($row["definition"], ";");
+	$definition = preg_replace('~[\s;]+$~', '', $row["definition"]);
 	$dollar_quote = (JUSH == "pgsql" || ($language && $language != "sql")); // PostgreSQL quotes the body in all languages, MySQL only in the external ones
+	$parameters = ($set ? implode(",", $set) . "\n" : "");
 	return "CREATE$definer $routine "
-		. idf_escape(trim($row["name"]))
-		. " (" . ($set ? implode(",", $set) . "\n" : "") . ")"
+		. table(trim($row["name"]))
+		// T-SQL doesn't accept empty parentheses in a procedure, a function requires them even if it has no parameter
+		. (JUSH == "mssql" && $routine == "PROCEDURE" ? rtrim($parameters) : " ($parameters)")
 		. ($routine == "FUNCTION" ? "\nRETURNS" . process_type($row["returns"], routine_collate($row["returns"]["collation"])) : "")
 		. ($language ? " LANGUAGE $language" : "")
 		. ($options ? "\n" . implode(" ", $options) : "")
-		. ($dollar_quote ? " AS " . q_dollar("\n" . trim($definition) . "\n") : "\n$definition;")
+		. ($dollar_quote ? " AS " . q_dollar("\n" . trim($definition) . "\n") : (JUSH == "mssql" ? "\nAS" : "") . "\n$definition;")
 	;
 }
 
-/** Remove current user definer from SQL command */
+/** Remove the definer of the logged user from a CREATE command */
 function remove_definer(string $query): string {
-	return preg_replace('~^([A-Z =]+) DEFINER=`' . preg_replace('~@(.*)~', '`@`(%|\1)', logged_user()) . '`~', '\1', $query); //! proper escaping of user
+	$definer = implode("@", array_map('Adminer\idf_escape', explode("@", logged_user(), 2))); // the same rule as in routine(), the definer of another account must be preserved
+	return preg_replace('(^([A-Z =]+) DEFINER=' . preg_quote($definer) . ')', '\1', $query);
+}
+
+/** Get the name of a new object by Adminer::namePattern()
+* @param 'PRIMARY'|'UNIQUE'|'INDEX'|'FULLTEXT'|'SPATIAL'|'VECTOR'|'FOREIGN'|'CHECK'|'TRIGGER' $type
+* @param list<string> $columns
+*/
+function object_name(string $type, string $table, array $columns): string {
+	return str_replace(array("{table}", "{columns}"), array($table, implode("_", $columns)), adminer()->namePattern($type));
 }
 
 /** Format foreign key to use in SQL query
 * @param ForeignKey $foreign_key
+* @param string $name empty to let the database choose it
 */
-function format_foreign_key(array $foreign_key): string {
+function format_foreign_key(array $foreign_key, string $name = ""): string {
 	$db = $foreign_key["db"];
 	$ns = $foreign_key["ns"];
-	return " FOREIGN KEY (" . implode(", ", array_map('Adminer\idf_escape', $foreign_key["source"])) . ") REFERENCES "
+	return ($name != "" ? " CONSTRAINT " . idf_escape($name) : "") . " FOREIGN KEY (" . implode(", ", array_map('Adminer\idf_escape', $foreign_key["source"])) . ") REFERENCES "
 		. ($db != "" && $db != $_GET["db"] ? idf_escape($db) . "." : "")
 		. ($ns != "" && $ns != $_GET["ns"] ? idf_escape($ns) . "." : "")
 		. idf_escape($foreign_key["table"])
@@ -532,7 +601,8 @@ function doc_version(): string {
 		return ($match[1] >= 18 ? $match[1] : "19");
 	}
 	// MySQL uses calendar versioning since 26.7 so the URL needs both the year and the month the two most significant digits give the documented version of PostgreSQL (18, 9.6) and MS SQL (16)
-	$regexp = (JUSH == 'sql' ? '~^\d+\.\d+~' : '~^\d\.?\d~');
+	// CockroachDB also documents each year and month (v25.4)
+	$regexp = (JUSH == 'sql' || connection()->flavor == 'cockroach' ? '~^\d+\.\d+~' : '~^\d\.?\d~');
 	$version = (preg_match($regexp, $server_info, $match) ? $match[0] : "");
 	if (JUSH == 'mssql') {
 		// MS SQL identifies the versions by monikers: https://learn.microsoft.com/en-us/sql/sql-server/versioning-system-monikers-ui-sql-server
@@ -545,10 +615,10 @@ function doc_version(): string {
 
 /** Create link to database documentation
 * @param string[] $paths JUSH => $path
-* @param string $text HTML code
+* @param string $text HTML code (🕮 is not on Mac)
 * @return string HTML code
 */
-function doc_link(array $paths, string $text = "<sup>?</sup>"): string {
+function doc_link(array $paths, string $text = "📖"): string {
 	$version = doc_version();
 	$urls = array(
 		'sql' => "https://dev.mysql.com/doc/refman/$version/en/",
@@ -559,9 +629,16 @@ function doc_link(array $paths, string $text = "<sup>?</sup>"): string {
 	);
 	if (connection()->flavor == 'maria') {
 		$urls['sql'] = "https://mariadb.com/kb/en/";
-		$paths['sql'] = (isset($paths['mariadb']) ? $paths['mariadb'] : str_replace(".html", "/", $paths['sql']));
+		$paths['sql'] = ($paths['mariadb'] ?: str_replace(".html", "/", $paths['sql']));
 	}
-	return ($paths[JUSH] ? "<a href='" . h($urls[JUSH] . $paths[JUSH] . (JUSH == 'mssql' ? "?view=$version" : "")) . "'" . target_blank() . ">$text</a>" : "");
+	if (connection()->flavor == 'cockroach' && $paths['cockroach']) { // the others link the PostgreSQL documentation
+		$urls['pgsql'] = "https://docs.cockroachlabs.com/docs/v$version/";
+		$paths['pgsql'] = $paths['cockroach'];
+	}
+	return ($paths[JUSH]
+		? " <a href='" . h($urls[JUSH] . $paths[JUSH] . (JUSH == 'mssql' ? "?view=$version" : "")) . "'" . target_blank() . " class='doc' title='" . lang('Documentation') . "'>$text</a>"
+		: ""
+	);
 }
 
 /** Compute size of database
@@ -575,7 +652,7 @@ function db_size(string $db): string {
 	foreach (table_status() as $table_status) {
 		$return += $table_status["Data_length"] + $table_status["Index_length"];
 	}
-	return format_number($return);
+	return adminer()->formatSizeValue($return);
 }
 
 /** Print SET NAMES if utf8mb4 might be needed */
