@@ -848,7 +848,9 @@ function shortcutResults() {
 	const input = qs('input', dialog);
 	const results = qs('ul', dialog);
 	const query = input.value.toLowerCase();
-	shortcuts.results = shortcuts.links.filter(link => matchesSearch(query, link.label.toLowerCase()));
+	const matches = shortcuts.links.filter(link => matchesSearch(query, link.label.toLowerCase()));
+	// exact matches first, otherwise keep the original order
+	shortcuts.results = matches.filter(link => link.label.toLowerCase() == query).concat(matches.filter(link => link.label.toLowerCase() != query));
 	shortcuts.active = Math.min(shortcuts.active, shortcuts.results.length - 1);
 	if (shortcuts.active >= 0 && shortcuts.results[shortcuts.active].header) {
 		shortcuts.active = shortcutSkipHeaders(shortcuts.active, 1);

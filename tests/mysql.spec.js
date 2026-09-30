@@ -210,6 +210,13 @@ test('Keyboard shortcut scrolling', async () => {
 	await page.keyboard.press('Escape');
 });
 
+test('Keyboard shortcut exact match first', async () => {
+	await page.evaluate(() => window.shortcutOpen([{href: '#', label: 'albums_old'}, {href: '#', label: 'Albums'}]));
+	await page.locator('#shortcuts input').fill('albums');
+	await expect(page.locator('#shortcuts [role=option]').first()).toHaveText('Albums');
+	await page.keyboard.press('Escape');
+});
+
 test('Keyboard database and table search', async () => {
 	await goto(page, '/adminer/?username=ODBC&db=adminer_test&select=albums');
 	await page.locator('a[href="#fieldset-search"].toggle').click();
