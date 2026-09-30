@@ -134,7 +134,7 @@ td.check { text-align: end; } /* to display the checkboxes next to the data */
 #shortcuts li.shortcut-group:first-child { padding-top: .3em; }
 .js #fieldset-search .search-column-select { display: none; }
 .search-column-picker { position: relative; }
-.search-column-list, .search-operator-list { position: absolute; z-index: 1; top: 100%; left: 0; box-sizing: border-box; width: 100%; max-height: 15em; overflow: auto; padding: 0; margin: 0; border: 1px solid var(--fg); background: var(--bg); }
+.search-column-list, .search-operator-list { position: absolute; z-index: 2; top: 100%; left: 0; box-sizing: border-box; width: 100%; max-height: 15em; overflow: auto; padding: 0; margin: 0; border: 1px solid var(--fg); background: var(--bg); } /* z-index to cover the sticky thead */
 .search-column-list li, .search-operator-list li { padding: .2em .3em; list-style: none; cursor: pointer; }
 .search-column-list li.active, .search-column-list li:hover, .search-operator-list li.active, .search-operator-list li:hover { background: var(--lit); }
 :target { background: var(--lit); }
